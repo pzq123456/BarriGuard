@@ -1,0 +1,31 @@
+[project]
+name = "barriguard"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.138.1",
+    "loguru>=0.7.3",
+    "opencv-python",
+    "scipy>=1.18.1",
+    "simplejpeg>=1.9.0",
+    "torch",      # 会从专用索引安装 CUDA 版本
+    "torchvision", # 会从专用索引安装 CUDA 版本
+    "ultralytics",
+    "uvicorn>=0.49.0",
+]
+
+# 配置 PyTorch CUDA 专用索引源
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+# 指定 torch 和 torchvision 使用上述索引
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+
