@@ -13,3 +13,6 @@ tmp
 dataset
 *.tar.gz
 *.pt
+
+data
+results
