@@ -49,9 +49,24 @@
   横向开口落在 `[min_gap, max_gap]` 内 → 报为移除缺口；开口 `> max_gap`（默认 min×3）视为
   行边界/场景尺度，忽略以防误报。
 - **块内缺口 `intra`**：每个大块内逐列量"带覆盖率"（带高**随透视自动收缩**，远处被拉瘦
-  的水马不会被误判为低覆盖），覆盖率 `< thr` 的内部连续段即缺口。
+  的水马不会被误判为低覆盖），覆盖率 `< thr` 的内部连续段即缺口。**行间过渡防伪**：若某
+  低覆盖段的带高远大于紧邻左/右列的带高（`>2×`），说明它把"两行不同高度"并进了一条带
+  （如远排水马与右排水马之间的过道），是行间过渡而非缺口，自动排除——该判据只依赖带高
+  相对关系，**不引入任何位置先验**，因此加了远排之后不会把"排间的过道"误判成缺口。
 
 缺口的 x/y 包围框由图像推导（两块之间中点 / 低覆盖段范围），非手工标。
+
+### 远端捕捉（不引入新的位置硬编码）
+
+远排水马之前识别不到的三处根因：① 远排白板 V≈150-180，低于近端 `WHITE_V_MIN=195`；
+② 颜色体检 `a*≥136 或 V≥190` 对更暗更灰的远排过严；③ 放宽阈值若全局生效会连灰路面/杂物
+一起放进（实测 fg 增至 597k、检出全丢）。
+
+现在的做法（`segment.py`）：新增**远端白板阈值** `FAR_WHITE_V_MIN=145,S≤80`，仍以**红底座
+锚定**过滤（非设施的白色——路面/白车/天空——不与红底座相连，被剔除），并把颜色体检的 V
+上限从 190 降到 145（灰路面不近红底座，本来就不进前景，故不会因此放入）。阈值仍复用**既有
+`far_band`** 做远端宽松带，**未新增任何位置矩形**。实测 fg 仅 +11~14k（远排便被补全），
+未污染路面。
 
 ## 5. 实验结果
 
@@ -59,9 +74,9 @@
 
 | 帧 | 分割前景px | 检出缺口 | 判定 |
 |----|-----------|----------|------|
-| day_1333 (1623x909) | 323.5k | inter (689,545,747,603) sev=0.91 | **命中真缺口**（人站立的缝） |
-| day_0944 (1622x905) | 335.1k | inter (688,534,748,594) sev=0.92；intra (1118,329,1142,389) sev=0.66 | 命中真缺口 + 远端一处候选 |
-| 实流 17:58 (1920x1080) | 181.3k | inter (808,632,890,714) sev=1.00；intra (192,687,232,833) sev=0.46 | **命中真移除缺口**（人被切断处）+ 近端一处候选 |
+| day_1333 (1623x909) | 334.3k | inter (689,545,747,603) sev=0.91 | **命中真缺口**（人站立的缝） |
+| day_0944 (1622x905) | 349.0k | inter (688,534,748,594) sev=0.92 | **命中真缺口**（远端候选被更完整的分割补全，不再误报） |
+| 实流 08:18 (1920x1080) | 323.2k | inter (824,630,882,688) sev=0.77 | **命中真移除缺口**（人被切断处） |
 
 - 两帧标注帧真缺口都在 x≈[685,748]，即画面中有人站在那里的缝隙；算法在**没有缺口坐标**
   前提下唯一/精确地把它框出。
@@ -82,27 +97,79 @@
 
 ![live](img/live_annotated.png)
 
-## 6. 局限性（诚实版）
+## 6. 服务化重建（`server/`，根目录）
+
+将 `tmp/server` 的稳定骨架（RTSP 拉流 + 时序确认状态机 + HTTP 预览）扒出，并把其**固定
+slot 逻辑**整体替换为上面的自主检测，得到完整的自主流水线：
+
+```
+server/source.Reader(拉流) ─> server/engine.Monitor ─> server/render ─> FastAPI(/stream /snapshot.jpg /mask.png)
+                               │  server/config.load()                   读取 server/config.yaml
+                               │  water_barrier/research/segment.segment()     自主分割
+                               │  water_barrier/research/detect.detect_gaps()  自主缺口(inter+intra)
+                               └─ server/track.GapTracker()                    时序确认
+```
+
+### 6.1 可调参数统一管理（`server/config.yaml`）
+
+所有阈值/核/几何区域/时序常数均**抽取到 `server/config.yaml` 统一管理**（`python -m server
+--config <path>` 可指定；修改后重启生效）。按算法分块，为**多算法并存**设计：
+
+- `algorithms.water_gap`：色彩阈值 `color` + 连通域体检 `cc` + 形态学核 `morph` + 场景几何
+  `region`(roi/far_band/exclude/road_rois) + 缺口尺度 `gap` + 时序状态机 `track`。
+- `algorithms.night_lamp`：夜间灯光（兄弟算法），参数已预留（bands/阈值/自相关区间等），
+  供后续接入。
+- `cameras`：列表，每个相机指定 `rtsp_url` + 运行的算法 `algorithm`。
+- `server` / `alert` / `log`：服务/告警/日志级参数。
+
+代码侧：`server/config.py` 把 `water_gap` 解析为 `SegmentCfg`（water_barrier/research/segment）
++ `GapCfg`（detect） + `TrackCfg`（track）；`engine.Monitor` 直接用配置的绝对像素值（无分辨率缩放）。
+算法模块参数全部由配置注入，**不再有分散在各处的魔数**。
+
+关键改进：**单帧无法区分"人/车/遮挡"与"真移除"**，二者都表现为带被打断。生产版把
+`tmp/server` 已验证的"衰减池 + 中值帧路露率(RER) + 迟滞状态机"移植过来，作用于每个
+**自主检出的缺口轨道**：缺口候选先 SUSPECTED，持续超过 `ALARM_HOLD` 后对其中值帧算
+`RER`，RER≥0.25（缺口罩内露出的是真实路面）才升 ALARM。
+
+**性能修复**（此前 RTSP 预览明显掉帧的根因）：`segment._white_near_red` 原实现对每个
+白板连通块做整帧 `labels==i` 布尔重建，1920x1080 下单次 640ms（约 1.5fps）。已改为
+`np.bincount` 单趟统计各连通块的膨胀红命中数 + `keep[labels]` 查表回写，语义完全等价，
+segment 由 658ms 降到 73ms；叠加渲染 + JPEG 后整条 worker 循环约 108ms，即
+**~9-10 fps**，回到与旧版 `tmp/server`（实测 8.8-13.7 fps）相当水平。
+
+离线端到端验证（`python -m server --offscreen <img>`，喂同一帧 14 遍）：
+
+| 输入帧 | 检出轨道 | 时序收敛（0→13s） | 判定 |
+|--------|----------|------------------|------|
+| data/input/1749_1333.png | inter(真缺口) | NORMAL→SUSPECTED→**ALARM**，RER=0.61 | 真移除确认 |
+| 实流(_live_frame) | inter(人缺口) | NORMAL→SUSPECTED→**ALARM**，RER=0.39 | 真移除确认 |
+| data/input/1749_0944.png | inter(真缺口) | NORMAL→SUSPECTED→**ALARM**，RER=0.51 | 真缺口确认（远端候选已被更完整分割补全） |
+
+> 远端候选 RER=0.30 恰在阈值附近（原标定"非路内容≤0.10 vs 真缺口 0.27-0.65"），
+> 属边界情形：可能是真实远端开口，也可能是背景植被。生产对远端带需单独门限/时序处理。
+
+## 7. 局限性（诚实版）
 
 | 环节 | 结论 |
 |------|------|
-| 单帧语义 | 无法区分"人/车/遮挡"与"真移除"，二者都表现为带被打断。落地需叠加**时序**（衰减池 + 路露率 RER，见既有 `server/` 状态机）做最终确认。 |
-| 夜晚 | 色彩阈值失效，分割退化；红/白锚点在夜间不可靠（另见 `night_lamp_report.md`）。 |
-| 远端/背景 | 带远端与植被、阴影交界处偶发 `intra` 候选，需结合距离/时序过滤。 |
+| 单帧语义 | 无时序时无法区分"人/车/遮挡"与"真移除"；**已在 `server/track.py` 用衰减池+中值帧 RER 补上**，离线验证真缺口稳定升 ALARM。 |
+| 夜晚 | 色彩阈值失效，红/白锚点夜间不可靠（另见 `night_lamp_report.md`）。 |
+| 远端/背景 | 远排水马现已补全（远端白板阈值 + 颜色体检 V 放宽，红底座锚定剔除非设施白色；见 §4）。但实流凌晨/逆光时远排仍偏暗、且受既有 `far_band` 覆盖范围限制，属残余短板。 |
 | 尺度先验 | `min_gap/max_gap` 需按场景水马尺寸标定；场景尺度变化需重校。 |
 
-## 7. 运行方式
+## 8. 运行方式
 
 ```bash
-# 端到端：抓一帧实时流 + 跑分割/检测，输出标注图
+# 实时 HTTP 预览（拉流 + 自主检测 + 告警框）
+python -m server                           #  http://127.0.0.1:8000/
+
+# 离线端到端验证（喂同一帧 N 遍，观察状态机收敛）
+python -m server --offscreen data/input/1749_1333.png --repeat 14
+
+# 实验截图（分割 + 缺口标注）
 python water_barrier/research/run.py --rtsp
-
-# 跑指定帧（含标注截图）
-python water_barrier/research/run.py data/input/1749_1333.png data/input/1749_0944.png
-
-# 核心模块
-python -c "from water_barrier.research import segment, detect"
 ```
 
-产物：`research/out/`（无参数时的标注图）、`docs/img/`（本报告引用图）。需要
-`python + opencv-python + numpy`。
+产物：`water_barrier/research/out/`（实验/验证叠加图）、`docs/img/`（报告引用图）。需要
+`python + opencv-python + numpy + fastapi + uvicorn + loguru`。运行 `python -m server` 时
+当前目录需在仓库根（`water_barrier` 与 `server` 均需可导入）。

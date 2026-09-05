@@ -11,6 +11,7 @@ dependencies = [
     "opencv-python",
     "scipy>=1.18.1",
     "simplejpeg>=1.9.0",
+    "pyyaml",
     "torch",      # 会从专用索引安装 CUDA 版本
     "torchvision", # 会从专用索引安装 CUDA 版本
     "ultralytics",

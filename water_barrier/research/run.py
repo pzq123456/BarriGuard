@@ -51,10 +51,7 @@ def fetch_live_frame(path, warm_std=35.0, warm_max=300):
 def annotate(frame, name, outdir):
     h, w = frame.shape[:2]
     fg = segment(frame)
-    gaps = detect_gaps(fg,
-                       min_area=max(2000, int(0.0008 * h * w)),
-                       min_gap_px=max(20.0, 0.02 * w),
-                       max_gap_px=max(60.0, 0.06 * w))
+    gaps = detect_gaps(fg)
     vis = frame.copy()
     vis[fg > 0] = (60, 220, 60)
     for g in gaps:

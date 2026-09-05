@@ -17,8 +17,17 @@ from dataclasses import dataclass
 import cv2 as cv
 import numpy as np
 
-TOP_PIECES = 6
-MIN_GAP_PX = 30.0
+
+@dataclass(frozen=True)
+class GapCfg:
+    """自主缺口检测的可调参数（绝对像素单位；无分辨率缩放）。"""
+    min_area: int = 3000
+    thr: float = 0.5
+    min_len: int = 2
+    end_margin: float = 0.04
+    min_gap_px: float = 30.0
+    max_gap_px: float = 90.0
+    top_pieces: int = 6
 
 
 @dataclass
@@ -75,28 +84,28 @@ def _intra_cov(fg, piece, bin_col=8):
     for b in range(nb):
         l = piece.x0 + int(b * W / nb); r = piece.x0 + int((b + 1) * W / nb)
         y0i, y1i = int(max(0, top[b])), int(min(fg.shape[0], bot[b] + 1))
+        if y1i <= y0i:
+            continue
         win = fg[y0i:y1i, l:r]
         cov[b] = min(1.0, cv.countNonZero(win) / float(win.size))
     return cov, nb, top, bot
 
 
-def detect_gaps(fg, min_area=3000, thr=0.5, min_len=2, end_margin=0.04,
-                min_gap_px=MIN_GAP_PX, max_gap_px=None):
+def detect_gaps(fg, cfg: GapCfg = None):
     """返回 Gap 列表（bbox + 严重度 + 类型），无缺口位置预标记。
 
-    min_gap_px / max_gap_px：块间断口仅当开口落在 [min, max] 内才报警。
+    cfg.min_gap_px / max_gap_px：块间断口仅当开口落在 [min, max] 内才报警。
     max（默认=min*3）：防止把"两段本是同一向纵深延伸的墙"或"跨行"误判成缺口。
     """
-    if max_gap_px is None:
-        max_gap_px = min_gap_px * 3
-    pieces = _pieces(fg, min_area, TOP_PIECES)
+    cfg = cfg or GapCfg()
+    pieces = _pieces(fg, cfg.min_area, cfg.top_pieces)
     gaps = []
 
     # 1) 块间断口
     ps = sorted(pieces, key=lambda p: p.x0)
     for a, b in zip(ps, ps[1:]):
         opening = b.x0 - a.x1
-        if not (min_gap_px <= opening <= max_gap_px):
+        if not (cfg.min_gap_px <= opening <= cfg.max_gap_px):
             continue
         inter_h = min(a.y1, b.y1) - max(a.y0, b.y0)
         min_h = min(a.y1 - a.y0, b.y1 - b.y0)
@@ -106,7 +115,7 @@ def detect_gaps(fg, min_area=3000, thr=0.5, min_len=2, end_margin=0.04,
         my = (a.y0 + a.y1) // 2
         hw = int(opening // 2)
         gaps.append(Gap(mx - hw, my - hw, mx + hw, my + hw,
-                        min(1.0, float(opening) / (min_gap_px * 2)), "inter"))
+                        min(1.0, float(opening) / (cfg.min_gap_px * 2)), "inter"))
 
     # 2) 块内低覆盖
     for p in ps:
@@ -114,17 +123,25 @@ def detect_gaps(fg, min_area=3000, thr=0.5, min_len=2, end_margin=0.04,
         if res is None:
             continue
         cov, nb, top, bot = res
-        m = max(1, int(round(nb * end_margin)))
+        m = max(1, int(round(nb * cfg.end_margin)))
         i = m
         while i < nb - m:
-            if cov[i] < thr:
+            if cov[i] < cfg.thr:
                 j = i
-                while j < nb - m and cov[j] < thr:
+                while j < nb - m and cov[j] < cfg.thr:
                     j += 1
-                if j - i >= min_len:
+                if j - i >= cfg.min_len:
                     spawn = (p.x1 - p.x0 + 1) / nb
                     gx0 = int(p.x0 + i * spawn); gx1 = int(p.x0 + (j + 1) * spawn)
                     gy0 = int(max(0, top[i])); gy1 = int(min(fg.shape[0], bot[j] + 1))
+                    hgap = gy1 - gy0
+                    # 行间过渡防伪：缺口只可能是"本行屏障带上的缺口"。若该低覆盖段的
+                    # 带高远大于紧邻左/右列的带高，说明此段把"两行不同高度"并进一条带
+                    # （例如远排水马与右排水马之间的过道），是行间过渡而非缺口，须排除。
+                    nb_h = [bot[hh] - top[hh] for hh in (i - 1, j + 1) if 0 <= hh < nb]
+                    if nb_h and hgap > 2.0 * min(nb_h):
+                        i = j
+                        continue
                     gaps.append(Gap(gx0, gy0, gx1, gy1,
                                     float(cov[i:j + 1].mean()), "intra"))
                 i = j
