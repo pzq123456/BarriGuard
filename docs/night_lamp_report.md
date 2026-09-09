@@ -1,8 +1,13 @@
 # 夜间水马警示灯"熄灭"检测与定位 —— 研究报告
 
 **视频**: `tmp/1749_202609040100.mp4`（相机 1749，1920x1080 @12.49fps，22498 帧 ≈30 分钟，凌晨 01:00）
-**代码**: `night_lamp/night_lamp_pipeline.py`（最终版，单遍扫描 ~600s 跑完全视频）
-**输出**: `night_lamp/pipeline_result.json`（运行管线另生成 `pipeline_map.png`/`spots.pkl`；报告配图见 `img/night_lamp_*.png`）
+**代码**: `night_lamp/experiments/night_lamp_pipeline.py`（最终版，单遍扫描 ~600s 跑完全视频；已归档，研究证据）
+**输出**（历史：当时生成于 `night_lamp/` 下，现库内仅保留报告配图）: `pipeline_result.json`（另有 `pipeline_map.png`/`spots.pkl`；报告配图见 `img/night_lamp_*.png`）
+
+> **本文档状态（2026-09-09）：已冻结的研究报告**，记录 v3 全视频扫描管线的结论与证据，
+> 正文历史坐标均为 v3 估计值。生产现状已不同：burst 抽查制（40 帧/小时）＋ overnight
+> 冻结 detector ＋ P1 night gate，见 `../night_lamp/README.md`；
+> 研究脚本归档于 `../night_lamp/experiments/`，后续演进见文末 §9。
 
 ---
 
@@ -47,7 +52,7 @@
 - **半分辨率背景失败**：`gray[::2,::2]` 采样 + 最近邻上采样，使未采样像素使用 1-2px 外邻居的 p50；水马纹理像素间差 ±40-90 → 每帧恒有 ~11-15 个纹理噪声像素超过 +60 阈值 → duty=100%，全线误判。**实测 OFF 帧 ROI 内假"闪光"=11px，与理论完全吻合。** → 背景必须全分辨率逐像素。
 - **窗口采样数奇偶 bug**：`win_frames=int(180*fps)=2247` 为奇数 → 窗口起点帧奇偶交替 → 采样数 1124/1123 交替，`len(pat)==win_samples` 硬判等把**一半窗口的序列静默丢弃**（ser_n=5 而非 8-9）。→ `win_frames` 取偶。
 
-### v3 最终算法（`night_lamp/night_lamp_pipeline.py`）
+### v3 最终算法（`night_lamp/experiments/night_lamp_pipeline.py`）
 单遍扫描，3min 窗口，stride=2：
 1. 每窗口全分辨率 **16 平面 uint16 灰度直方图** → 逐像素 p50 背景（`k*16+8`）；
 2. 全窗口逐像素 max → `flash = max - bg` → 阈值 60 → 连通域(minA=6) → **最近邻匹配**(欧氏 ≤10px) 进 spot 表；位置 EMA 平滑；
@@ -62,7 +67,7 @@
 
 | 类别 | 数量 | 说明 |
 |---|---|---|
-| DEAD（灭灯） | **(1305.2, 411.9)** | 远线第 3 盏，真值确认 |
+| DEAD（灭灯） | **(1305.2, 411.9)** | 远线第 3 盏，真值确认（= 现 registry L1306，同灯，<2px 为估计差异） |
 | DEAD（残差 FP） | (839.8, 498.7) | 工人安全帽，需语义屏蔽 |
 | ALIVE-STEADY | 4 盏（6 blob，两盏有分裂） | 近左常亮线全部在位 |
 | ALIVE-FLASH | 远线 ~25 盏有效 | 含双检/挂载反光，链条见 §5 |
@@ -119,14 +124,40 @@
 3. 参数相机相关：fps=12.49（lag 窗口 [5,12] 按 0.56s 周期设定）、FLASH_TH=60、duty 域随曝光策略漂移 → 部署时按相机标定，或自适应估计周期。
 4. 性能：单遍 ~600s/30min 视频（CPU）；工程化可降采样至 stride=3、ROI 限定带内，预计 <3min。
 5. 建议上线形态：本 v3 作为"离线巡检"批处理；在线模式用滑动 3min 窗 + 相同分类器，输出带置信度的死灯列表 + 沿链序号。
+   （本条已取代：生产采用 40 帧突发抽查 ＋ night gate，v3 分类器未进生产，见 §9。）
 
 ## 8. 复现
 
 ```powershell
-cd C:\Users\admin\Desktop\work\BarriGuard\night_lamp
+cd C:\Users\admin\Desktop\work\BarriGuard\night_lamp\experiments
 python night_lamp_pipeline.py   # ~10min, 输出 pipeline_result.json / pipeline_map.png / spots.pkl
 python result_figs.py           # 生成 pipeline_map.png 与 result_*.png 标注图
 python localize.py              # 远线灯链与间距分析
 ```
 
 > 试验中间过程脚本与数据已归档至 `tmp/lightexp_exp/`。
+
+生产入口（2026-09 起，burst 制；与本节 v3 复现无关，互不替代）：
+
+```powershell
+cd C:\Users\admin\Desktop\work\BarriGuard\night_lamp
+python main.py --config configs/config_1749.yaml --source rtsp --mode full --out output/overnight_<date>
+```
+
+## 9. 后续演进（生产现状，非本报告结论）
+
+* 抽查制：每小时 1 次，每次连续 40 帧（3.2s），依据与铁律见 `../night_lamp/README.md`。
+* detector：overnight 冻结版（`ON=7x7max≥med+40‖mean≥med+30`，A/B/C 三档只记录不晋升）。
+  v3 的 ALIVE/DEAD 分类器（含 §6 灯罩几何规则）未进生产。
+* night gate（P1，单夜推导的生产起点，非通用验证阈值）：enter=100 / exit=120 / p=2，
+  非 NIGHT burst 跳过 detector（GATED），证据照常落盘：
+
+![night qualification](img/night_lamp_fig6_night_qualification.png)
+
+* 每 burst 存 raw + overlay 取证（圆圈 = registry 灯，菱形 = 候选）。2026-09-08 夜间 burst 示例：
+
+![burst evidence](img/night_lamp_burst_evidence.jpg)
+
+* P2-E（小窗单步空间聚合）结论 NOT PROMISING，已停止、不进 P2-F；聚合 detector 未采用。
+  证据见 `../night_lamp/output/p2e_aggregation/report.md`，研究脚本见
+  `../night_lamp/experiments/README.md`。

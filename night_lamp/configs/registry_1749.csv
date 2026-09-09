@@ -1,0 +1,36 @@
+kind,id,x,y,r,type,band,role,provenance,note
+lamp,L103,102.6,593.3,10,steady,near,registry,night_longexp_short.json manual box center,
+lamp,L438,444.3,544.8,10,steady,near,P1_steady_but_flash,night_longexp_short.json manual box center,
+lamp,L716,716.0,503.5,10,steady,near,registry,night_longexp_short.json manual box center,
+lamp,L901,900.6,475.4,10,steady,near,registry,night_longexp_short.json manual box center,
+lamp,L1230,1229.5,424.5,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1267,1267.3,421.8,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1306,1306.2,412.9,10,flash,far,P0_dead_control,night_longexp_short.json manual box center,
+lamp,L1326,1324.8,410.9,10,flash,far,P0_positive_control,"midpoint blind(1323.0,410.1)+pipeline(1326.5,411.6); brief 2026-09-08",
+lamp,L1382,1382.4,428.3,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1426,1425.8,428.7,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1449,1449.4,425.6,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1476,1476.2,423.7,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1495,1494.8,421.4,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1510,1510.1,418.4,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1520,1520.2,413.4,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1528,1527.8,410.1,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1536,1536.0,407.9,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1545,1545.2,405.2,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1555,1555.3,403.1,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1558,1558.4,401.2,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1562,1562.3,399.9,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1571,1570.7,399.1,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1594,1594.0,394.0,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1611,1610.7,382.6,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1623,1623.2,383.1,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1633,1633.0,382.6,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1642,1641.8,382.8,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1658,1658.2,383.9,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1673,1672.5,381.9,10,flash,far,registry,night_longexp_short.json manual box center,
+lamp,L1686,1685.8,382.2,10,flash,far,registry,night_longexp_short.json manual box center,
+watchlist,W1612,1612.0,632.0,,,,,,right-band reflector?
+watchlist,W1643,1643.0,759.0,,,,,,right-band reflector?
+watchlist,W1641,1641.0,818.0,,,,,,right-band reflector?
+watchlist,W1543,1543.0,373.0,,,,,,2nd row or net reflection?
+watchlist,W839,839.8,498.7,,,,,,known_fp_region safety-hat
