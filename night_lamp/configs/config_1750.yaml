@@ -31,7 +31,6 @@ registry:
   controls:
     positive: []
     steady_check: []
-  known_dead: []  # vacant at init (no field-confirmed dead lamp yet)
 
 # Detector params copied from 1749 frozen-20260908 as INIT ONLY.
 # DO NOT run production on 1750 without re-estimating T/d and ON thresholds on 1750 night video.
@@ -47,6 +46,13 @@ detector:
   duty_hi: 0.85
   c_ac: 0.50         # profile C (observational subset only)
   c_min_on: 2
+
+# Additive models init copy of 1749 provisional values. RE-ESTIMATE on 1750
+# night video before any use; record-only, never alerts.
+extra_models:
+  f2_swing_floor: 20.0
+  steady_swing_lo: 25.0
+  steady_roi_hi: 140.0
 
 # Night qualification copied from 1749 P1 as INIT ONLY, must recalibrate on 1750 nights.
 # 100/120/p=2 is a production starting point, not a validated universal threshold.

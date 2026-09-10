@@ -2,7 +2,7 @@
 
 No matplotlib, no detector import. Evidence reader only.
 
-  python tools/inspect.py --out output/production_1749
+  python tools/check_run.py --out output/production_1749
 """
 import argparse
 import glob

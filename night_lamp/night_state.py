@@ -3,9 +3,8 @@
 P1 provisional (single night, 9 bursts): T_enter=100, T_exit=120, p=2.
 Hysteresis required: T_enter < T_exit. Recalibrate with production data.
 
-Batch replay() below is verbatim logic from the P1 analysis (used by the
-regression test). update() is the same rule as a single cross-burst step,
-persisted by main.py in night_state.json -- the only cross-burst state.
+update() is the single cross-burst step, persisted by main.py in
+night_state.json -- the only cross-burst state.
 """
 NIGHT_VERSION = "p1-provisional-20260908"
 
@@ -24,22 +23,6 @@ def update(state, count, g, t_enter, t_exit, persistence):
         if g > t_exit:
             state, count = TWILIGHT, 0
     return state, count, entered
-
-
-def replay(global_meds, t_enter, t_exit, persistence, initial=TWILIGHT):
-    """Batch replay over a burst series. Returns (hist, enter_idx|None)."""
-    st, cnt, enter = initial, 0, None
-    hist = []
-    for i, g in enumerate(global_meds):
-        if st == TWILIGHT:
-            cnt = cnt + 1 if g < t_enter else 0
-            if cnt >= persistence:
-                st, enter = NIGHT, i
-        else:
-            if g > t_exit:
-                st, cnt = TWILIGHT, 0
-        hist.append(st)
-    return hist, enter
 
 
 def load(path):

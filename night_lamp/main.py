@@ -29,6 +29,7 @@ import cv2 as cv
 import numpy as np
 import yaml
 
+import adaptive as AD
 import detector as DET
 import night_state as NS
 from camera import open_source
@@ -170,6 +171,12 @@ def main():
     det = cfg["detector"]
     night = cfg["night"]
     assert night["enter_threshold"] < night["exit_threshold"], "hysteresis required"
+    # Additive models (adaptive.py, provisional): config with frozen-code defaults
+    # so configs without the block run unchanged. Never feeds alerting.
+    ex = cfg.get("extra_models", {}) or {}
+    f2_floor = float(ex.get("f2_swing_floor", AD.SWING_FLOOR))
+    s_lo = float(ex.get("steady_swing_lo", AD.STEADY_SWING_LO))
+    s_hi = float(ex.get("steady_roi_hi", AD.STEADY_ROI_HI))
 
     source = args.source or cfg["source"]["default"]
     out = args.out or str(base / cfg["evidence"]["out"])
@@ -218,6 +225,10 @@ def main():
             "registry_frozen": True, "detector_version": DET.DETECTOR_VERSION,
             "threshold_profile": {"A": "n_on>=1", "B": "AC>=0.35&duty[0.05,0.85]",
                                   "C": "B&n_on>=2&AC>=0.50(obs)"},
+            "extra_models": {"version": "additive-20260911 (provisional, record-only)",
+                             "f1": "roi_r=clip(round(min(w,h)/2)-1,3,10) per lamp",
+                             "f2_swing_floor": f2_floor,
+                             "steady": {"swing_lo": s_lo, "roi_hi": s_hi}},
             "night": {"version": NS.NIGHT_VERSION, "enter_threshold": night["enter_threshold"],
                       "exit_threshold": night["exit_threshold"], "persistence": night["persistence"],
                       "require_night_for_detection": night["require_night_for_detection"],
@@ -284,7 +295,19 @@ def main():
             lamps_out, cands = [], []
             if not gated:
                 for l in reg["lamps"]:
-                    m = DET.lamp_metrics(frames, l["x"], l["y"], **dk)
+                    # F1: box-size ROI (frozen detector math, per-lamp radius only).
+                    rr = AD.adaptive_roi(l.get("w"), l.get("h"), det["roi_r"])
+                    m = DET.lamp_metrics(frames, l["x"], l["y"], **{**dk, "roi_r": rr})
+                    m["roi_r"] = rr
+                    # F2/F3 additive evidence (lamps only; watchlist stays frozen-only).
+                    f2 = AD.f2_metrics(frames, l["x"], l["y"],
+                                       lag_lo=det["lag_lo"], lag_hi=det["lag_hi"],
+                                       ac_th=det["ac_th"], duty_lo=det["duty_lo"],
+                                       duty_hi=det["duty_hi"], swing_floor=f2_floor)
+                    m.update(f2)
+                    m["profile_S"] = AD.steady_flag(m["n_on"], m["n_valid"],
+                                                    f2["f2_swing"], m["roi_median"],
+                                                    swing_lo=s_lo, roi_hi=s_hi)
                     m.update({"burst_id": bid, "lamp_id": l["id"], "x": l["x"], "y": l["y"],
                               "w": l["w"], "h": l["h"], "origin": l["origin"],
                               "control": l["control"], "note": l["note"]})
@@ -369,10 +392,14 @@ def build_summary(out):
         for l in d["lamps"]:
             s = lamps.setdefault(l["lamp_id"], {"x": l["x"], "y": l["y"], "control": l.get("control", "normal"),
                                                 "origin": l.get("origin", ""), "A": [], "B": [], "C": [],
+                                                "F2": [], "S": [], "swing": [],
                                                 "ac": [], "duty": [], "n_on": []})
             s["A"].append(l["profile_A"])
             s["B"].append(l["profile_B"])
             s["C"].append(l["profile_C"])
+            s["F2"].append(l.get("profile_F2", 0))
+            s["S"].append(l.get("profile_S", 0))
+            s["swing"].append(l.get("f2_swing", 0.0))
             s["ac"].append(l["ac"])
             s["duty"].append(l["duty"])
             s["n_on"].append(l["n_on"])
@@ -384,9 +411,12 @@ def build_summary(out):
                     "n": len(s["A"]), "A_rate": round(float(np.mean(s["A"])), 3),
                     "B_rate": round(float(np.mean(s["B"])), 3),
                     "C_rate": round(float(np.mean(s["C"])), 3),
+                    "F2_rate": round(float(np.mean(s["F2"])), 3),
+                    "S_rate": round(float(np.mean(s["S"])), 3),
                     "mean_ac": round(float(a.mean()), 3), "std_ac": round(float(a.std()), 3),
                     "mean_duty": round(float(du.mean()), 4), "std_duty": round(float(du.std()), 4),
-                    "mean_n_on": round(float(np.mean(s["n_on"])), 1)}
+                    "mean_n_on": round(float(np.mean(s["n_on"])), 1),
+                    "mean_swing": round(float(np.mean(s["swing"])), 1)}
     json.dump({"total_bursts": n_b, "registry_count": reg_count,
                "registry_version": reg_ver, "registry_frozen": True,
                "controls": {k: per[k] for k in per if per[k].get("control") != "normal"},

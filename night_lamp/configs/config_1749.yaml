@@ -32,7 +32,6 @@ registry:
   controls:
     positive: ["M06"]
     steady_check: ["M02"]
-  known_dead: []  # P0_dead_control vacant since v2 (no field-confirmed dead lamp yet)
 
 # Frozen overnight detector (frozen-20260908). DO NOT TUNE without new evidence.
 detector:
@@ -47,6 +46,13 @@ detector:
   duty_hi: 0.85
   c_ac: 0.50         # profile C (observational subset only)
   c_min_on: 2
+
+# Additive models (adaptive.py) -- PROVISIONAL 2026-09-11, camera-1749 basis only.
+# Record-only, never alerts. Frozen detector block above is untouched.
+extra_models:
+  f2_swing_floor: 20.0  # M07-OLD dead swing 8.4 gated; alive flashers >=40
+  steady_swing_lo: 25.0 # M01/M03/M04 flat vs flashers swing>100
+  steady_roi_hi: 140.0  # near steady roi_med 150-200 vs far dark cells
 
 # P1 night qualification -- PROVISIONAL, derived from single night (9 bursts).
 # 100/120/p=2 is a production starting point, not a validated universal threshold.

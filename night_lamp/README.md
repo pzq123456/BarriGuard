@@ -27,7 +27,7 @@
 ```bash
 python main.py --config configs/config_1749.yaml --mode dry    # 1 burst 验证
 python main.py --config configs/config_1749.yaml --mode full   # N bursts，见 burst.count
-python tools/inspect.py --out output/production_1749  # 查结果
+python tools/check_run.py --out output/production_1749  # 查结果
 ```
 
 冷启动标注在 `configs/registry_1749.csv`（Excel 可编辑，kind=lamp/watchlist）；
@@ -38,6 +38,19 @@ detector = overnight 冻结版（`detector.py`，行为与 `overnight_run.py` �
 night_state = P1 provisional（`enter_threshold=100/exit_threshold=120/p=2`，配置化；
 单夜推导的生产起点，非通用验证阈值）。
 `require_night_for_detection=true`：非 NIGHT burst 跳过 detector（gated，可记录、可回放验证）。
+
+## 适用范围修正（2026-09-11，人确诊 M07-OLD 死 / M07-NEW 活）
+
+* frozen detector（`med+40` + 20x20 ROI）只对**孤立低基线灯**成立（M06 类）；
+  之前的"死灯零误报"结论不推广到以下三类，违例实证见 `adaptive.py` 头注释：
+* 密集远线灯（间距 3~15px）：20x20 ROI 把邻灯吞进来，duty 恒 1.0 → 用 F1
+  （`roi_r=clip(round(min(w,h)/2)-1,3,10)`，w/h 终于进检测器）+ F2（中心摆幅）。
+* 高基线灯（M08/M22 类，OFF 中心仍高于 `med+40`）：绝对阈值天生看不见 →
+  用 F2（相对 on2，但 swing<20 绝对门先行，M07-OLD 死灯 swing 8.4 被门拦住）。
+* 近线常亮灯（M01/M03/M04）：只有 F3 记录（`profile_S`），无死灯判据。
+* `extra_models` 全部 provisional + record-only（`configs/*extra_models`），换机位重估；
+  残差：M14 类辉光饱和 ROI（frozen n_on≈0 但 F2=1）说明绝对规则需要暗参考像素，
+  两列互补是设计，不是故障；M18/M19（间距 3.1px）可能读到同一灯具，需白天复核。
 
 ## 工程化原则（KISS）
 
