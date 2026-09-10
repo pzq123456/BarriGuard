@@ -12,9 +12,8 @@ import argparse
 import cv2 as cv
 import numpy as np
 
+from .detector import REF
 from .sampling import STEP, _row_axis, sample_row
-
-REF = 812
 
 
 def autocorr(x):

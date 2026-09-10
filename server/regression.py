@@ -61,6 +61,35 @@ def check(params):
             lines.append(("PASS" if good else "FAIL", cid, os.path.basename(img),
                           [(e.payload.get("row_id"), e.payload.get("rer")) for e in alarms],
                           res.debug.get("frame_status")))
+    tok, tlines = check_temporal(params)
+    return ok_all and tok, lines + tlines
+
+
+def check_temporal(params):
+    """时序行为钉死（R5）：同一货车停留序列（30s），hold=10 必漏报一次、
+    hold=60 必全程无声。钉的是累积/衰减速率，静态帧回归测不出来。
+    hold=10 漏报是已知机制行为（transient 熬过短门限），不是回归失败；
+    若未来 decay/hold 语义有意改变，需同步更新此处期望并写明原因。
+    """
+    calib = next(c for c in params["cameras"] if c["id"] == "1750")["algos"]["water_gap"]
+    seq = (["data/1750/clean_01.jpg"] * 2
+           + ["data/1750/dahua1002491_20260910_094708_01.jpg"] * 3
+           + ["data/1750/dahua1002491_20260910_094708_02.jpg",
+              "data/1750/dahua1002491_20260910_094708_03.jpg"]
+           + ["data/1750/clean_01.jpg"] * 3)
+    frames = [cv.imread(p) for p in seq]
+    ok_all, lines = True, []
+    for hold, want_alarm in ((10.0, True), (60.0, False)):
+        cal = {**calib, "track": {**calib["track"], "alarm_hold_s": hold}}
+        algo = create("water_gap", frames[0].shape, cal, "1750")
+        saw = False
+        for i, fr in enumerate(frames):
+            res = algo.step(fr, float(i * 10))
+            saw = saw or any(e.kind == "alarm" for e in res.events)
+        good = saw == want_alarm
+        ok_all = ok_all and good
+        lines.append(("PASS" if good else "FAIL", "1750", f"van-series hold={hold:g}",
+                      f"alarm={saw} expect={want_alarm}", ""))
     return ok_all, lines
 
 

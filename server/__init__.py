@@ -1,5 +1,5 @@
-"""BarriGuard 服务包：RTSP 拉流 -> 缺口报警 -> 时序确认 -> 叠加展示。
+"""BarriGuard 服务包：纯框架（拉流/多流调度/渲染/证据/HTTP），不含算法。
 
-与 tmp/server 的区别：去掉固定 slot（GAP/NEAR/MID/FAR 预标记细框），缺口由
-water_barrier.BarrierAlarm 自主检出，再经 server/track.py 时序确认。
+算法经 server.registry 按名构造 water_barrier 等包的 Algorithm 实现；
+标定内容校验归各算法包，server/config.yaml 只管拓扑。
 """

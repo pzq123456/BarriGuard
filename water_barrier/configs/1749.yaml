@@ -1,39 +1,38 @@
-# water_gap 标定: 1749 机位(已冻结, 与旧 server/config.yaml + water_barrier 常量一致)。
-# 本目录 (water_barrier/configs/) 归算法包所有: ROI + 算法参数都在这里调，
-# server/config.yaml 只引用路径。调完重启 server 生效。
-# rows.poly 为归一化多边形 (与 data/test/night_12000.json 一致，已内联，无 null)。
-# 未列出的检测阈值 (REF/FLOOR/MIN_WIDTH/BASE_WIN 等) 仍用模块默认值。
+# water_gap 标定: 1749 机位。
+# 本目录归算法包所有：ROI + 算法参数都在这里调，server/config.yaml 只引用路径。
+# 调完重启 server 生效。每个值的来源见行尾注释（报告缩写见 docs/）。
+# R2 = shadow_white 实验；R4 = soak/烧屏；R5 = hold 拦截对照。
 rows:
+  # poly 内联自 data/test/night_12000.json（归一化，2026-09-10 导出）。
   - id: row_0_left_near
     poly: [[0.0, 0.516938], [0.689914, 0.365628], [0.689914, 0.461608], [0.001397, 0.846658]]
-    U: 28.5
-    report: true
-    # 固定缺口(栅栏门)处有白色铁门, 信号只跌到~0.3, floor 0.18 成不了核。
-    # floor 0.24 经 2026-09-10 日间帧验证: 缺口成核且整行无新增 FP。
+    U: 28.5            # 旧冻结值（日间帧标定）
+    report: true        # 旧行为：只报左近行
+    # floor 0.24：R4 实测（栅栏门白铁门，信号只跌到~0.3；0.24 下缺口连跑 51 站，
+    # 整行仅此一处≥30 站；只验了日间，夜间未知）。
     detect: {floor_max: 0.24}
   - id: row_1_far_center
     poly: [[0.693725, 0.399503], [0.722307, 0.402891], [0.77439, 0.397245], [0.783918, 0.397245], [0.83219, 0.364499], [0.911585, 0.354336], [0.912221, 0.372403], [0.867124, 0.382565], [0.836001, 0.385953], [0.809324, 0.405149], [0.782647, 0.427733], [0.724212, 0.435637], [0.691184, 0.439024]]
-    U: 3.0
-    report: false
+    U: 3.0             # 旧冻结值
+    report: false       # 旧行为：只看不报
   - id: row_2_right_near
     poly: [[0.576219, 0.992322], [0.891895, 0.401762], [0.905869, 0.506775], [0.841082, 0.99458]]
-    U: 6.0
-    report: false
+    U: 6.0             # 旧冻结值
+    report: false       # 旧行为：只看不报
 
-road_rois: [[700, 700, 1000, 860], [1040, 560, 1240, 660], [600, 850, 900, 900]]
+road_rois: [[700, 700, 1000, 860], [1040, 560, 1240, 660], [600, 850, 900, 900]]  # 旧标定
 
 track:
-  decay_rate: 0.5
-  alarm_hold_s: 10.0
-  reconfirm_s: 5.0
-  rer_threshold: 0.25
-  track_stale_s: 8.0
-  match_iou: 0.25
-  match_center_ratio: 0.5
-  median_window: 5
-  intact_reset_s: 5.0
-  rer_purity: 0.70
-  patch_size: 8
-  # 日光门控：路面 white 占比中位数超此值则整帧 SUNGLARE（冻结、不累计）。
-  # 1749 路面中位 0.37（最高框 0.51），1750 日光 0.83，门限 0.65 两边留裕量。
+  decay_rate: 0.5       # 旧标定
+  alarm_hold_s: 10.0    # 旧标定（60/300 为可选项，需运营确认延迟，见 R4/R5）
+  reconfirm_s: 5.0      # 旧标定
+  rer_threshold: 0.25   # 旧标定（tmp/server 实测：非路≤0.10 vs 真缺口 0.27~0.65）
+  track_stale_s: 8.0    # 旧标定
+  match_iou: 0.25       # 旧标定
+  match_center_ratio: 0.5  # 旧标定
+  median_window: 5      # 旧标定（中值帧抗瞬时遮挡）
+  intact_reset_s: 5.0   # 旧标定
+  rer_purity: 0.70      # 旧标定
+  patch_size: 8         # 旧标定
+  # R4 实测：1749 路面中位 0.37（最高框 0.51），1750 日光 0.83；只定状态不冻结。
   sunglare_road_white: 0.65

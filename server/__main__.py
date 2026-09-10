@@ -39,7 +39,9 @@ def offscreen(params, img_path: str, repeat: int = 14, camera: str = None,
             logger.info("[{}:{}] t={}s 标注={} 事件={}", cam["id"], name, i,
                         len(res.annots),
                         [(e.kind, e.payload.get("rer")) for e in res.events])
-    vis = render.draw_annots(frame.copy(), algo.step(frame, repeat).annots)
+    res = algo.step(frame, repeat)
+    vis = render.draw_status(render.draw_annots(frame.copy(), res.annots),
+                             res.debug.get("frame_status", "OK"))
     out = os.path.join(outdir, os.path.splitext(os.path.basename(img_path))[0] + "_state.png")
     cv.imwrite(out, vis)
     logger.info("状态叠加已保存: {}", out)
