@@ -67,17 +67,17 @@ def load_registry(base, reg_cfg):
     rows = [r for r in _csv.DictReader(
         open(Path(base / reg_cfg["file"]), encoding="utf-8", newline=""))
         if (r.get("kind") or "").strip()]
-    assert reg_cfg["frozen"] is True and reg_cfg["count"] == 30
+    assert reg_cfg["frozen"] is True
     lamps = [{"id": r["id"], "x": float(r["x"]), "y": float(r["y"]),
               "r": int(float(r["r"])), "type": r["type"], "band": r["band"],
               "role": r["role"], "provenance": r["provenance"]}
              for r in rows if r["kind"] == "lamp"]
     wl = [{"id": r["id"], "x": float(r["x"]), "y": float(r["y"]), "note": r["note"]}
           for r in rows if r["kind"] == "watchlist"]
-    assert len(lamps) == 30
+    assert len(lamps) == reg_cfg["count"]
     return {"lamps": lamps,
             "watchlist_candidate_only_never_promote": wl,
-            "registry_version": reg_cfg["version"], "registry_count": 30,
+            "registry_version": reg_cfg["version"], "registry_count": reg_cfg["count"],
             "registry_frozen": True}
 
 
@@ -198,7 +198,7 @@ def main():
             "video": str(base / cfg["camera"]["video"]) if source == "file" else cfg["camera"]["rtsp"],
             "fps_nominal": round(fps, 3), "total_frames": total,
             "burst_len": burst_len, "burst_starts": starts,
-            "registry_version": reg["registry_version"], "registry_count": 30,
+            "registry_version": reg["registry_version"], "registry_count": reg["registry_count"],
             "registry_frozen": True, "detector_version": DET.DETECTOR_VERSION,
             "threshold_profile": {"A": "n_on>=1", "B": "AC>=0.35&duty[0.05,0.85]",
                                   "C": "B&n_on>=2&AC>=0.50(obs)"},
@@ -302,19 +302,19 @@ def main():
                       ensure_ascii=False)
             ok_n += 1
             if gated:
-                print("[%s] burst=OK fps=%.2f frames=%s registry=30/frozen night=%s GATED "
-                      "(G=%s, no detection)" % (bid, burst_fps, burst_len, state, gb["global_median"]),
+                print("[%s] burst=OK fps=%.2f frames=%s registry=%s/frozen night=%s GATED "
+                      "(G=%s, no detection)" % (bid, burst_fps, burst_len,
+                      reg["registry_count"], state, gb["global_median"]),
                       flush=True)
             else:
                 by = {l["lamp_id"]: l for l in lamps_out}
-                print("[%s] burst=OK fps=%.2f frames=%s registry=30/frozen night=%s "
-                      "1306:A=%s/B=%s 1326:A=%s/B=%s 438:A=%s/B=%s "
-                      "ac1326=%s d1326=%s cands=%s" %
-                      (bid, burst_fps, burst_len, state,
-                       by["L1306"]["profile_A"], by["L1306"]["profile_B"],
-                       by["L1326"]["profile_A"], by["L1326"]["profile_B"],
+                print("[%s] burst=OK fps=%.2f frames=%s registry=%s/frozen night=%s "
+                      "1267:A=%s/B=%s 438:A=%s/B=%s "
+                      "ac1267=%s d1267=%s cands=%s" %
+                      (bid, burst_fps, burst_len, reg["registry_count"], state,
+                       by["L1267"]["profile_A"], by["L1267"]["profile_B"],
                        by["L438"]["profile_A"], by["L438"]["profile_B"],
-                       by["L1326"]["ac"], by["L1326"]["duty"], len(cands)), flush=True)
+                       by["L1267"]["ac"], by["L1267"]["duty"], len(cands)), flush=True)
         except Exception as e:
             jl.write("errors.jsonl", {"burst_id": bid, "burst_status": "failed",
                                       "failure_reason": "%s:%s" % (type(e).__name__, e)})
@@ -335,6 +335,8 @@ def main():
 def build_summary(out):
     lamps = {}
     n_b = 0
+    rm = json.load(open(os.path.join(out, "run_meta.json"), encoding="utf-8"))
+    reg_count, reg_ver = rm.get("registry_count"), rm.get("registry_version")
     bids = sorted(f for f in os.listdir(os.path.join(out, "bursts")) if f.endswith(".json"))
     for f in bids:
         d = json.load(open(os.path.join(out, "bursts", f), encoding="utf-8"))
@@ -362,8 +364,9 @@ def build_summary(out):
                     "mean_ac": round(float(a.mean()), 3), "std_ac": round(float(a.std()), 3),
                     "mean_duty": round(float(du.mean()), 4), "std_duty": round(float(du.std()), 4),
                     "mean_n_on": round(float(np.mean(s["n_on"])), 1)}
-    json.dump({"total_bursts": n_b, "registry_count": 30, "registry_frozen": True,
-               "P0": {k: per[k] for k in ("L1306", "L1326") if k in per},
+    json.dump({"total_bursts": n_b, "registry_count": reg_count,
+               "registry_version": reg_ver, "registry_frozen": True,
+               "P0": {k: per[k] for k in ("L1267",) if k in per},
                "P1": {k: per[k] for k in ("L438",) if k in per},
                "per_lamp": per},
               open(os.path.join(out, "summary.json"), "w", encoding="utf-8"),

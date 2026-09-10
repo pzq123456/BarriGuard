@@ -1,7 +1,7 @@
 """缺口时序确认与状态机：由 tmp/server/gap_detector.py 移植，去掉固定 slot 概念。
 
 原 slot 版以固定窗口的"覆盖率相对基准"做快检；本版缺口是自主检出的**动态 bbox**。
-因此把"快检(DEFECTIVE)"任务交给检测器（detect_gaps 返回即视为缺，否则视为完好），
+因此把"快检(DEFECTIVE)"任务交给检测器（BarrierAlarm 报出即视为缺，否则视为完好），
 本模块只负责**时序确认**：候选缺口在"衰减池 + 路露率 RER + 迟滞"下，
 把"真移除"与"人/车长期遮挡"分开——二者都表现为带被打断，只有 RER 能分离。
 
@@ -13,8 +13,6 @@ from typing import List, Optional
 
 import cv2
 import numpy as np
-
-from .config import TrackCfg
 
 
 class GapCondition(enum.Enum):
@@ -98,19 +96,18 @@ def calc_patch_rer(image_bgr, slot_mask, foreground_mask, road_profile,
 class GapTracker:
     """单个缺口候选的时序状态机：衰减池 + 中值帧 RER 确认 + 迟滞门控 + 快速脱锁。
 
-    阈值全部由 TrackCfg 注入（见 config.py），此处不硬编码（保留默认常量作兜底）。
+    阈值全部由调用方注入（见 config.py），此处不硬编码。
     """
 
-    def __init__(self, box: tuple, box_id: int = 0, tcfg: TrackCfg = None) -> None:
-        t = tcfg or TrackCfg()
+    def __init__(self, box: tuple, tcfg: dict) -> None:
+        t = tcfg
         self.box = box
-        self.box_id = box_id
-        self._decay = t.decay_rate
-        self._hold = t.alarm_hold_s
-        self._reconfirm = t.reconfirm_s
-        self._rer_th = t.rer_threshold
-        self._reset = t.intact_reset_s
-        self._cap = t.median_window
+        self._decay = t["decay_rate"]
+        self._hold = t["alarm_hold_s"]
+        self._reconfirm = t["reconfirm_s"]
+        self._rer_th = t["rer_threshold"]
+        self._reset = t["intact_reset_s"]
+        self._cap = t["median_window"]
         self.state = GapState.NORMAL
         self._accum = 0.0
         self._last_update = -1.0
@@ -120,7 +117,7 @@ class GapTracker:
         self._intact_sec = 0.0
         self.last_seen = 0.0
         self.severity = 0.0
-        self.kind = "inter"
+        self.kind = "gap"
 
     def push_frame(self, frame_bgr: np.ndarray) -> None:
         self._window.append(frame_bgr)

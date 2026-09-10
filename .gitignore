@@ -23,3 +23,5 @@ out
 *.pdf
 
 output
+evidence/
+logs/

@@ -19,11 +19,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 def offscreen(params, img_path: str, repeat: int = 14,
-              outdir: str = "water_barrier/research/out") -> None:
+               outdir: str = "water_barrier/output") -> None:
     """不依赖 HTTP 的端到端校验：对同一帧重复喂给引擎，观察状态机 NORMAL->SUSPECTED->ALARM。"""
     from server.engine import Monitor
     frame = cv.imread(img_path)
-    mon = Monitor(frame.shape, params.water_gap)
+    mon = Monitor(frame.shape, params["water_gap"])
     os.makedirs(outdir, exist_ok=True)
     for i in range(repeat):
         views = mon.step(frame, i * 1.0)  # 每帧间隔1s，加速累计
@@ -55,9 +55,9 @@ def main():
         return
 
     import uvicorn
-    p = params.server
-    logger.info("BarriGuard 启动: http://{}:{}", p.host, p.port)
-    uvicorn.run("server.app:app", host=p.host, port=p.port, log_level="warning")
+    p = params["server"]
+    logger.info("BarriGuard 启动: http://{}:{}", p["host"], p["port"])
+    uvicorn.run("server.app:app", host=p["host"], port=p["port"], log_level="warning")
 
 
 if __name__ == "__main__":

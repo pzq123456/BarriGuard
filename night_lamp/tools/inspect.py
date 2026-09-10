@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--lamps", nargs="*", default=["L1306", "L1326", "L438"])
+    ap.add_argument("--lamps", nargs="*", default=["L1267", "L438"])
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.out, "bursts", "*.json")))
