@@ -27,6 +27,7 @@ class Reader:
     def __init__(self, url: str):
         self._url = url
         self._frame = None
+        self._seq = 0  # 帧序号 (burst_next 去重用, read() 语义不变)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -43,6 +44,24 @@ class Reader:
         """最新帧，无帧返回 None。调用方持副本，线程安全。"""
         with self._lock:
             return None if self._frame is None else self._frame.copy()
+
+    def burst_next(self, n: int, timeout_s: float = 30.0):
+        """收集 n 帧新帧 (按 seq 去重)；超时抛 TimeoutError (night_lamp burst 用)。"""
+        out, t0 = [], time.time()
+        with self._lock:
+            last = self._seq
+        while len(out) < n:
+            if time.time() - t0 > timeout_s:
+                raise TimeoutError(f"burst_next超时 {len(out)}/{n}")
+            with self._lock:
+                seq = self._seq
+                fr = None if self._frame is None else self._frame.copy()
+            if fr is not None and seq != last:
+                last = seq
+                out.append(fr)
+            else:
+                time.sleep(0.02)
+        return out
 
     def _loop(self):
         if shutil.which("ffmpeg"):
@@ -123,6 +142,7 @@ class Reader:
                 frame = np.frombuffer(raw, np.uint8).reshape(h, w, 3).copy()
                 with self._lock:
                     self._frame = frame
+                    self._seq += 1
             rc = self._proc.poll() if self._proc else None
             self._kill_proc()
             if self._stop.is_set():
@@ -149,5 +169,6 @@ class Reader:
                     break
                 with self._lock:
                     self._frame = frame
+                    self._seq += 1
             cap.release()
             time.sleep(RETRY_WAIT_S)

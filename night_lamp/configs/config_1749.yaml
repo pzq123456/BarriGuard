@@ -20,13 +20,18 @@ source:
   default: file    # file | rtsp (CLI --source overrides)
 
 # Cold-start annotation lives in registry_1749.csv (Excel-editable).
-# Freeze attestation stays here; loader enforces frozen/count/rows.
+# Freeze attestation stays here; loader enforces frozen/active-count/rows.
+# v2 schema: kind,id,x,y,w,h,origin,status,updated_at,note (see tools/build_registry.py).
+# id M01..M29 sorted by x, origin manual:<file>#idxNN, status active|voided (tombstone, never delete).
 registry:
   file: registry_1749.csv
-  version: v20260910-rev28
-  source: v20260908-frozen30 minus L1306/L1326 (field-voided 2026-09-10, no fixture on site); L1267 promoted to P0_positive_control
+  version: v20260911-rev28-voidM07
+  source: night_longexp_short.json 29 boxes 1:1; M07 voided 2026-09-11 daytime no fixture (night box was person), 28 active
   frozen: true
   count: 28
+  controls:
+    positive: ["M06"]
+    steady_check: ["M02"]
   known_dead: []  # P0_dead_control vacant since v2 (no field-confirmed dead lamp yet)
 
 # Frozen overnight detector (frozen-20260908). DO NOT TUNE without new evidence.

@@ -96,7 +96,7 @@ def calc_patch_rer(image_bgr, slot_mask, foreground_mask, road_profile,
 class GapTracker:
     """单个缺口候选的时序状态机：衰减池 + 中值帧 RER 确认 + 迟滞门控 + 快速脱锁。
 
-    阈值全部由调用方注入（见 config.py），此处不硬编码。
+    阈值全部由调用方注入（见标定文件），此处不硬编码。
     """
 
     def __init__(self, box: tuple, tcfg: dict) -> None:
@@ -118,6 +118,7 @@ class GapTracker:
         self.last_seen = 0.0
         self.severity = 0.0
         self.kind = "gap"
+        self.row_id = ""
 
     def push_frame(self, frame_bgr: np.ndarray) -> None:
         self._window.append(frame_bgr)

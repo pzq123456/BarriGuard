@@ -27,9 +27,9 @@ def save_snap(out_dir, bgr, tag, lamps, cands, quality=70):
     raw_p, ovl_p = snap_paths(out_dir, tag)
     cv.imwrite(raw_p, bgr, [cv.IMWRITE_JPEG_QUALITY, quality])
     vis = bgr.copy()
-    for l in lamps:  # frozen registry dots + ids
-        col = {"P0_dead_control": (0, 0, 255), "P0_positive_control": (255, 255, 0),
-               "P1_steady_but_flash": (0, 255, 255)}.get(l.get("role"), (0, 255, 0))
+    for l in lamps:  # frozen registry dots + ids, color by controls
+        col = {"positive": (255, 255, 0),
+               "steady_check": (0, 255, 255)}.get(l.get("control"), (0, 255, 0))
         cv.circle(vis, (int(l["x"]), int(l["y"])), 7, col, 2)
         cv.putText(vis, l["id"], (int(l["x"]) + 9, int(l["y"]) - 8),
                    cv.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)

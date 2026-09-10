@@ -31,6 +31,7 @@ python tools/inspect.py --out output/production_1749  # 查结果
 ```
 
 冷启动标注在 `configs/registry_1749.csv`（Excel 可编辑，kind=lamp/watchlist）；
+v2列 `kind,id,x,y,w,h,origin,status,updated_at,note`，由 `tools/build_registry.py` 从手动框如实生成（`--check` 验1:1），状态只许 `active<->voided` 翻转、永不删行；
 冻结背书（version/frozen/count）在 `configs/config_1749.yaml` 的 registry 块，loader 强制校验。
 
 detector = overnight 冻结版（`detector.py`，行为与 `overnight_run.py` 一致，已回归）。

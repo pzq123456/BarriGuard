@@ -62,21 +62,37 @@ def load_config(path):
 
 
 def load_registry(base, reg_cfg):
-    """Cold-start table: kind lamp/watchlist rows. Same dict shapes as frozen json."""
+    """Cold-start table v2: kind lamp/watchlist, status active|voided tombstone."""
     import csv as _csv
     rows = [r for r in _csv.DictReader(
         open(Path(base / reg_cfg["file"]), encoding="utf-8", newline=""))
         if (r.get("kind") or "").strip()]
     assert reg_cfg["frozen"] is True
+    need = {"kind", "id", "x", "y", "origin", "status", "note"}
+    assert need.issubset(set(rows[0].keys())), "not v2 csv: %s" % list(rows[0].keys())
+    ctrls = reg_cfg.get("controls", {}) or {}
+    pos = set(ctrls.get("positive", []))
+    steady = set(ctrls.get("steady_check", []))
+
+    def _ctl(i):
+        if i in pos:
+            return "positive"
+        if i in steady:
+            return "steady_check"
+        return "normal"
+
+    lamps = [r for r in rows if r["kind"] == "lamp" and (r.get("status") or "active") == "active"]
     lamps = [{"id": r["id"], "x": float(r["x"]), "y": float(r["y"]),
-              "r": int(float(r["r"])), "type": r["type"], "band": r["band"],
-              "role": r["role"], "provenance": r["provenance"]}
-             for r in rows if r["kind"] == "lamp"]
+              "w": float(r["w"] or 0), "h": float(r["h"] or 0),
+              "origin": r["origin"], "note": r["note"], "control": _ctl(r["id"])}
+             for r in lamps]
     wl = [{"id": r["id"], "x": float(r["x"]), "y": float(r["y"]), "note": r["note"]}
-          for r in rows if r["kind"] == "watchlist"]
-    assert len(lamps) == reg_cfg["count"]
+          for r in rows if r["kind"] == "watchlist" and (r.get("status") or "active") == "active"]
+    voided = [r["id"] for r in rows if r.get("status") == "voided"]
+    assert len(lamps) == reg_cfg["count"], "%d vs count %d" % (len(lamps), reg_cfg["count"])
     return {"lamps": lamps,
             "watchlist_candidate_only_never_promote": wl,
+            "voided": voided,
             "registry_version": reg_cfg["version"], "registry_count": reg_cfg["count"],
             "registry_frozen": True}
 
@@ -270,7 +286,8 @@ def main():
                 for l in reg["lamps"]:
                     m = DET.lamp_metrics(frames, l["x"], l["y"], **dk)
                     m.update({"burst_id": bid, "lamp_id": l["id"], "x": l["x"], "y": l["y"],
-                              "type": l["type"], "role": l["role"]})
+                              "w": l["w"], "h": l["h"], "origin": l["origin"],
+                              "control": l["control"], "note": l["note"]})
                     lamps_out.append(m)
                     jl.write("lamp_metrics.jsonl", m)
 
@@ -308,13 +325,19 @@ def main():
                       flush=True)
             else:
                 by = {l["lamp_id"]: l for l in lamps_out}
+                pos = next((l for l in lamps_out if l.get("control") == "positive"), None)
+                st = next((l for l in lamps_out if l.get("control") == "steady_check"), None)
                 print("[%s] burst=OK fps=%.2f frames=%s registry=%s/frozen night=%s "
-                      "1267:A=%s/B=%s 438:A=%s/B=%s "
-                      "ac1267=%s d1267=%s cands=%s" %
+                      "%s:A=%s/B=%s %s:A=%s/B=%s "
+                      "ac%s=%s d%s=%s cands=%s" %
                       (bid, burst_fps, burst_len, reg["registry_count"], state,
-                       by["L1267"]["profile_A"], by["L1267"]["profile_B"],
-                       by["L438"]["profile_A"], by["L438"]["profile_B"],
-                       by["L1267"]["ac"], by["L1267"]["duty"], len(cands)), flush=True)
+                       pos["lamp_id"] if pos else "?", pos["profile_A"] if pos else "?",
+                       pos["profile_B"] if pos else "?",
+                       st["lamp_id"] if st else "?", st["profile_A"] if st else "?",
+                       st["profile_B"] if st else "?",
+                       pos["lamp_id"] if pos else "?", pos["ac"] if pos else "?",
+                       pos["lamp_id"] if pos else "?", pos["duty"] if pos else "?",
+                       len(cands)), flush=True)
         except Exception as e:
             jl.write("errors.jsonl", {"burst_id": bid, "burst_status": "failed",
                                       "failure_reason": "%s:%s" % (type(e).__name__, e)})
@@ -344,8 +367,8 @@ def build_summary(out):
             continue
         n_b += 1
         for l in d["lamps"]:
-            s = lamps.setdefault(l["lamp_id"], {"x": l["x"], "y": l["y"], "type": l["type"],
-                                                "role": l["role"], "A": [], "B": [], "C": [],
+            s = lamps.setdefault(l["lamp_id"], {"x": l["x"], "y": l["y"], "control": l.get("control", "normal"),
+                                                "origin": l.get("origin", ""), "A": [], "B": [], "C": [],
                                                 "ac": [], "duty": [], "n_on": []})
             s["A"].append(l["profile_A"])
             s["B"].append(l["profile_B"])
@@ -357,7 +380,7 @@ def build_summary(out):
     for lid, s in lamps.items():
         a = np.array(s["ac"])
         du = np.array(s["duty"])
-        per[lid] = {"x": s["x"], "y": s["y"], "type": s["type"], "role": s["role"],
+        per[lid] = {"x": s["x"], "y": s["y"], "control": s["control"], "origin": s["origin"],
                     "n": len(s["A"]), "A_rate": round(float(np.mean(s["A"])), 3),
                     "B_rate": round(float(np.mean(s["B"])), 3),
                     "C_rate": round(float(np.mean(s["C"])), 3),
@@ -366,8 +389,7 @@ def build_summary(out):
                     "mean_n_on": round(float(np.mean(s["n_on"])), 1)}
     json.dump({"total_bursts": n_b, "registry_count": reg_count,
                "registry_version": reg_ver, "registry_frozen": True,
-               "P0": {k: per[k] for k in ("L1267",) if k in per},
-               "P1": {k: per[k] for k in ("L438",) if k in per},
+               "controls": {k: per[k] for k in per if per[k].get("control") != "normal"},
                "per_lamp": per},
               open(os.path.join(out, "summary.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)

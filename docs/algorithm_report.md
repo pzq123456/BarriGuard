@@ -1,5 +1,9 @@
 # BarriGuard 水马缺口检测 —— 传统 CV 自主缺口检测算法报告
 
+> DEPRECATED（2026-09-10）：本文描述的 `water_barrier/research/` 路径已不存在，
+> 当前可信代码为 `water_barrier/{alarm,detector,sampling,quality,roi}.py` +
+> `server/{config,engine,worker,algo}.py`，标定见 `configs/water_gap/`。本文仅留作历史参考。
+
 日期：2026-09-04　相机：1749（1920x1080 RTSP）　代码：`water_barrier/research/`
 （`segment.py` 分割基座 + `detect.py` 缺口检测 + `run.py` 实验入口）
 

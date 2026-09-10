@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--lamps", nargs="*", default=["L1267", "L438"])
+    ap.add_argument("--lamps", nargs="*", default=["M06", "M02"])
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.out, "bursts", "*.json")))
@@ -40,10 +40,9 @@ def main():
     if os.path.isfile(s):
         d = json.load(open(s, encoding="utf-8"))
         print("summary: total_bursts=%s" % d["total_bursts"])
-        for k in ("P0", "P1"):
-            for lid, p in d.get(k, {}).items():
-                print("  %s A=%.3f B=%.3f C=%.3f n_on=%.1f" %
-                      (lid, p["A_rate"], p["B_rate"], p["C_rate"], p["mean_n_on"]))
+        for lid, p in d.get("controls", d.get("P0", {})).items():
+            print("  %s A=%.3f B=%.3f C=%.3f n_on=%.1f" %
+                  (lid, p["A_rate"], p["B_rate"], p["C_rate"], p["mean_n_on"]))
 
 
 if __name__ == "__main__":

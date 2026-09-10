@@ -1,0 +1,12 @@
+kind,id,x,y,w,h,origin,status,updated_at,note
+lamp,M01,152.2,238.0,41.0,50.1,manual:clean_01.json#idx04,active,2026-09-10,box 41.0x50.1; gap_next 187.3px
+lamp,M02,339.4,176.1,30.3,44.5,manual:clean_01.json#idx05,active,2026-09-10,box 30.3x44.5; gap_prev 187.3px; gap_next 180.0px
+lamp,M03,519.4,154.1,20.7,25.8,manual:clean_01.json#idx06,active,2026-09-10,box 20.7x25.8; gap_prev 180.0px; gap_next 145.3px
+lamp,M04,664.8,117.7,15.8,18.9,manual:clean_01.json#idx07,active,2026-09-10,box 15.8x18.9; gap_prev 145.3px; gap_next 107.2px
+lamp,M05,772.0,113.2,9.0,13.3,manual:clean_01.json#idx08,active,2026-09-10,box 9.0x13.3; gap_prev 107.2px; gap_next 11.9px
+lamp,M06,783.9,111.2,10.7,9.2,manual:clean_01.json#idx09,active,2026-09-10,box 10.7x9.2; gap_prev 11.9px; gap_next 268.3px
+lamp,M07,1052.2,115.2,8.1,9.9,manual:clean_01.json#idx10,active,2026-09-10,box 8.1x9.9; gap_prev 268.3px; gap_next 152.7px
+lamp,M08,1204.9,107.5,8.3,11.4,manual:clean_01.json#idx11,active,2026-09-10,box 8.3x11.4; gap_prev 152.7px; gap_next 32.3px
+lamp,M09,1237.2,108.6,11.9,12.1,manual:clean_01.json#idx12,active,2026-09-10,box 11.9x12.1; gap_prev 32.3px; gap_next 68.2px; REVIEW far-gap 68px>50
+lamp,M10,1305.4,118.9,13.6,18.1,manual:clean_01.json#idx13,active,2026-09-10,box 13.6x18.1; gap_prev 68.2px; gap_next 110.0px; REVIEW far-gap 110px>50; REVIEW far-gap 68px>50
+lamp,M11,1415.4,146.6,20.6,24.4,manual:clean_01.json#idx14,active,2026-09-10,box 20.6x24.4; gap_prev 110.0px; REVIEW far-gap 110px>50

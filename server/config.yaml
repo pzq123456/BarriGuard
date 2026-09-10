@@ -1,49 +1,39 @@
 # =============================================================================
-# BarriGuard 部署配置文件（统一管理所有可调参数）
+# BarriGuard 部署配置文件（三层：相机 / 算法启用 / 标定文件）
 # =============================================================================
 # 修改后重启服务即可生效：python -m server  [备用：--config <path>]
-# 支持多个算法（如 water_gap 水马缺口 / night_lamp 夜间灯光），按算法分块。
+# 每相机指定跑哪些算法 + 各算法的标定文件；标定路径相对仓库根解析。
+# 标定内容（ROI + 算法参数）归各算法包所有（如 water_barrier/configs/），
+# 这里只引用路径 + 启用开关，不放任何阈值。
 # 数值单位：绝对像素（无分辨率缩放，直接作用于当前帧）。
 # =============================================================================
 
 server:
   host: "127.0.0.1"      # 监听地址
-  port: 8000             # HTTP 端口（/stream /snapshot.jpg /mask.png）
+  port: 8000             # HTTP 端口（/stream/{id} /snapshot/{id}.jpg /mask/{id}.png）
   jpeg_quality: 80       # 预览 JPEG 质量
   preview_interval_s: 0.1  # MJPEG 帧间隔
+  evidence_resave_s: 300.0  # 同一次持续报警的补存间隔（防刷盘；静态场景可加大）
 
 # -----------------------------------------------------------------------------
-# 摄像头列表（每个摄像头指定运行哪种算法；算法默认参数见 algorithms 块）
+# 摄像头列表（多流：每相机一个 Reader + 一套 Algorithm 实例）
 # -----------------------------------------------------------------------------
 cameras:
   - id: "1749"
     name: "Mobile Camera 1749"
     rtsp_url: "rtsp://118.140.234.166:8554/dahua1002490"
-    algorithm: "water_gap"     # 运行算法的名称（与 algorithms 块一致）
     enabled: true
+    algorithms:
+      water_gap:
+        enabled: true
+        calibration: "water_barrier/configs/1749.yaml"
+      # night_lamp 未接入 server（仍走 night_lamp/main.py 独立运行），不占位
 
-# -----------------------------------------------------------------------------
-# 算法块 —— 水马缺口检测（缺口报警 + 时序确认）
-# 缺口框位置完全由 water_barrier.BarrierAlarm 按帧算出，此处无任何缺口坐标。
-# 检测阈值冻结在 water_barrier/alarm.py；本块只保留框架层可调参数。
-# -----------------------------------------------------------------------------
-algorithms:
-  water_gap:
-    enabled: true
-
-    region:
-      # 路面取色框：只给 RER 确认提供"路面长什么样"，不参与缺口定位。
-      road_rois: [[700, 700, 1000, 860], [1040, 560, 1240, 660], [600, 850, 900, 900]]
-
-    track:                     # 时序确认状态机（NORMAL/SUSPECTED/ALARM）
-      decay_rate: 0.5          # 异常秒数衰减速率（每秒）
-      alarm_hold_s: 10.0       # 持续到 ALARM 所需秒数
-      reconfirm_s: 5.0         # RER 复核最小间隔
-      rer_threshold: 0.25      # 路露率阈值（非路≤0.10 vs 真缺口 0.27-0.65）
-      track_stale_s: 8.0       # 长时间未匹配到缺口则删除轨道
-      match_iou: 0.25          # 缺口bbox匹配最小 IoU
-      match_center_ratio: 0.5  # 缺口中心距离与其尺寸之比上限
-      median_window: 5         # 时序中值帧窗口
-      intact_reset_s: 5.0      # 连续正常秒数，达到后快速脱锁到 NORMAL
-      rer_purity: 0.70         # RER patch 纯度下限
-      patch_size: 8            # RER patch 尺寸
+  - id: "1750"
+    name: "Mobile Camera 1750"
+    rtsp_url: "rtsp://118.140.234.166:8554/dahua1002491"
+    enabled: true        # 视频流 + 水马检测（参数 copy 1749，待重标）
+    algorithms:
+      water_gap:
+        enabled: true
+        calibration: "water_barrier/configs/1750.yaml"
