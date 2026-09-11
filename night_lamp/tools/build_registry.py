@@ -1,7 +1,8 @@
 """Build registry CSV from manual LabelMe boxes -- truthful, no invention.
 
 v2 schema (every column is used, see header comment in output CSV):
-  kind       lamp|watchlist. Loader splits: lamp->detector, watchlist->candidates.
+  kind       lamp|watchlist. Loader splits: lamp->detector, watchlist->audit
+             rows (runtime no longer evaluates watchlist).
   id         Stable key. Lamps M01..M29 sorted by x (sequence, NOT coordinate).
              Watchlist keeps legacy Wxxxx. Used in logs/overlay/summary.
   x,y        Box center, 1 decimal. Detector ROI center.

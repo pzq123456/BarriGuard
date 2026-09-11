@@ -51,6 +51,7 @@ detector:
 # Record-only, never alerts. Frozen detector block above is untouched.
 extra_models:
   f2_swing_floor: 20.0  # M07-OLD dead swing 8.4 gated; alive flashers >=40
+  dead_bright_cap: 120.0  # thinnest number: M07-OLD cmax 106 vs M26-alive 134
   steady_swing_lo: 25.0 # M01/M03/M04 flat vs flashers swing>100
   steady_roi_hi: 140.0  # near steady roi_med 150-200 vs far dark cells
 

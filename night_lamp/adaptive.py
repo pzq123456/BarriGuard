@@ -5,7 +5,7 @@ Provisional 2026-09-11, camera 1749 only, from two night videos
 Do NOT copy these numbers to a new camera without re-estimation.
 
 F1 adaptive ROI: roi_r = clip(round(min(w,h)/2)-1, 3, 10). Missing w/h
-  (watchlist, legacy) falls back to the frozen base (10) bit-identically.
+  falls back to the frozen base (10) bit-identically.
   Basis: 20x20 ROI swallows neighbours on the dense far row (3-15px gaps;
   M13 OFF frame roi_max=254 from a neighbour while its own center is 73),
   while shrinking globally breaks isolated lamps (M06 duty 0.30->0.10 at r=4).
@@ -23,9 +23,17 @@ F3 steady record: profile_S = all-ON and swing<25 and roi_median>140.
 """
 import numpy as np
 
-from detector import ac_score
+try:
+    from detector import ac_score
+except ImportError:  # imported as night_lamp.adaptive (server process)
+    from night_lamp.detector import ac_score
 
 SWING_FLOOR = 20.0
+DEAD_BRIGHT_CAP = 120.0  # thinnest number here: M07-OLD-dead cmax 106 vs
+# M26-alive-small cmax ~134. Dead = flat AND dim; small-but-bright flashers
+# (M24/M26 class) escape via this cap. Pump events raise brightness, which
+# errs toward missed (safe) never toward false alarm. Replace with per-lamp
+# amplitude baselines after multi-night data; do not copy blindly.
 STEADY_SWING_LO = 25.0
 STEADY_ROI_HI = 140.0
 
@@ -49,17 +57,20 @@ def f2_metrics(frames, x, y, lag_lo=5, lag_hi=12, ac_th=0.35,
                   for g in frames])
     p10, p90 = float(np.percentile(v, 10)), float(np.percentile(v, 90))
     swing = round(p90 - p10, 1)
+    stats = {"f2_min": round(float(v.min()), 1),
+             "f2_med": round(float(np.median(v)), 1),
+             "f2_max": round(float(v.max()), 1)}
     if swing < swing_floor:
         return {"f2_swing": swing, "f2_n_on": 0, "f2_duty": 0.0,
                 "f2_ac": 0.0, "f2_lag": -1, "profile_F2": 0,
-                "f2_gated": "swing_below_floor"}
+                "f2_gated": "swing_below_floor", **stats}
     on = v >= p10 + 0.4 * (p90 - p10)
     ac, lag = ac_score(on, lag_lo, lag_hi)
     duty = round(float(on.mean()), 4)
     f2 = int(ac >= ac_th and duty_lo <= duty <= duty_hi)
     return {"f2_swing": swing, "f2_n_on": int(on.sum()), "f2_duty": duty,
             "f2_ac": ac, "f2_lag": lag, "profile_F2": f2,
-            "f2_gated": ""}
+            "f2_gated": "", **stats}
 
 
 def steady_flag(n_on, n_valid, swing, roi_median,

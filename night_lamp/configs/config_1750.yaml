@@ -51,6 +51,7 @@ detector:
 # night video before any use; record-only, never alerts.
 extra_models:
   f2_swing_floor: 20.0
+  dead_bright_cap: 120.0
   steady_swing_lo: 25.0
   steady_roi_hi: 140.0
 

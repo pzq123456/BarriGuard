@@ -38,9 +38,8 @@ from evidence import Jsonl, rep_idx, save_snap
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = Path(__file__).resolve().parent
-K3 = np.ones((3, 3), np.uint8)
 
-JSONL = ("lamp_metrics.jsonl", "global_metrics.jsonl", "candidates.jsonl",
+JSONL = ("lamp_metrics.jsonl", "global_metrics.jsonl",
          "errors.jsonl", "snapshots.jsonl")
 
 
@@ -87,12 +86,9 @@ def load_registry(base, reg_cfg):
               "w": float(r["w"] or 0), "h": float(r["h"] or 0),
               "origin": r["origin"], "note": r["note"], "control": _ctl(r["id"])}
              for r in lamps]
-    wl = [{"id": r["id"], "x": float(r["x"]), "y": float(r["y"]), "note": r["note"]}
-          for r in rows if r["kind"] == "watchlist" and (r.get("status") or "active") == "active"]
     voided = [r["id"] for r in rows if r.get("status") == "voided"]
     assert len(lamps) == reg_cfg["count"], "%d vs count %d" % (len(lamps), reg_cfg["count"])
     return {"lamps": lamps,
-            "watchlist_candidate_only_never_promote": wl,
             "voided": voided,
             "registry_version": reg_cfg["version"], "registry_count": reg_cfg["count"],
             "registry_frozen": True}
@@ -100,29 +96,6 @@ def load_registry(base, reg_cfg):
 
 def full_done(out):
     return os.path.isfile(os.path.join(out, "summary.json"))
-
-
-def east_zone_candidates(frames):
-    """x>1690 far-east strip mini-propose (record only). Verbatim."""
-    stack = np.stack([g[360:470, 1690:1920] for g in frames])  # 40x110x230
-    mx = stack.max(axis=0).astype(np.int16)
-    rg = (stack.max(axis=0).astype(np.int16) - stack.min(axis=0).astype(np.int16))
-    m = ((rg >= 80) & (mx >= 150)).astype(np.uint8) * 255
-    m = cv.morphologyEx(m, cv.MORPH_OPEN, K3)
-    ncc, _, stats, cents = cv.connectedComponentsWithStats(m, 8)
-    raw = [(float(cents[i][0]) + 1690, float(cents[i][1]) + 360,
-            int(stats[i, 4]), int(rg[int(cents[i][1]), int(cents[i][0])]),
-            int(mx[int(cents[i][1]), int(cents[i][0])]))
-           for i in range(1, ncc) if stats[i, 4] >= 8]
-    raw.sort(key=lambda t: -t[3])
-    sel = []
-    for x, y, a, r, v in raw:
-        if all((x - sx) ** 2 + (y - sy) ** 2 >= 18 ** 2 for sx, sy, _, _, _ in sel):
-            sel.append((x, y, a, r, v))
-    return [{"x": round(x, 1), "y": round(y, 1), "id": "E%s-%s" % (int(x), int(y)),
-             "area": a, "score_range": r, "score_max": v,
-             "source": "east_x1690_propose"}
-            for x, y, a, r, v in sel]
 
 
 def mid_snap(jl, src, source, f0, starts, bi, reg, out, burst_len, snap_q):
@@ -138,8 +111,7 @@ def mid_snap(jl, src, source, f0, starts, bi, reg, out, burst_len, snap_q):
         wall = datetime.datetime.now().isoformat(timespec="seconds")
         tag = "mid-B%02d_%s%s%s" % (bi, wall[11:13], wall[14:16], wall[17:19])
         raw_rel, ovl_rel = save_snap(out, fr, tag, reg["lamps"],
-                                     reg["watchlist_candidate_only_never_promote"],
-                                     snap_q)
+                                     [], snap_q)
         return {"kind": "mid", "raw": raw_rel, "overlay": ovl_rel, "wall_ts": wall,
                 "near_burst": bi}
     except Exception as e:
@@ -193,7 +165,6 @@ def main():
     os.makedirs(out, exist_ok=True)
     os.makedirs(os.path.join(out, "bursts"), exist_ok=True)
     reg = load_registry(base, cfg["registry"])
-    wl = reg["watchlist_candidate_only_never_promote"]
     dk = det_kwargs(det)
 
     ns_path = os.path.join(out, "night_state.json")
@@ -292,14 +263,14 @@ def main():
                       "enter_threshold": night["enter_threshold"],
                       "exit_threshold": night["exit_threshold"]}
 
-            lamps_out, cands = [], []
+            lamps_out = []
             if not gated:
                 for l in reg["lamps"]:
                     # F1: box-size ROI (frozen detector math, per-lamp radius only).
                     rr = AD.adaptive_roi(l.get("w"), l.get("h"), det["roi_r"])
                     m = DET.lamp_metrics(frames, l["x"], l["y"], **{**dk, "roi_r": rr})
                     m["roi_r"] = rr
-                    # F2/F3 additive evidence (lamps only; watchlist stays frozen-only).
+                    # F2/F3 additive evidence.
                     f2 = AD.f2_metrics(frames, l["x"], l["y"],
                                        lag_lo=det["lag_lo"], lag_hi=det["lag_hi"],
                                        ac_th=det["ac_th"], duty_lo=det["duty_lo"],
@@ -314,28 +285,17 @@ def main():
                     lamps_out.append(m)
                     jl.write("lamp_metrics.jsonl", m)
 
-                for w in wl:
-                    m = DET.lamp_metrics(frames, w["x"], w["y"], **dk)
-                    c = {"burst_id": bid, "id": w["id"], "x": w["x"], "y": w["y"],
-                         **m, "note": w["note"]}
-                    cands.append(c)
-                    jl.write("candidates.jsonl", c)
-                for e in east_zone_candidates(frames):
-                    e["burst_id"] = bid
-                    cands.append(e)
-                    jl.write("candidates.jsonl", e)
-
             ri = rep_idx(gb["frame_medians"])
             wall_hms = wall_ts[11:13] + wall_ts[14:16] + wall_ts[17:19]
             raw_rel, ovl_rel = save_snap(out, bgr[ri], "%s_%s" % (bid, wall_hms),
-                                         reg["lamps"], cands, snap_q)
+                                         reg["lamps"], [], snap_q)
             snap = {"kind": "burst", "raw": raw_rel, "overlay": ovl_rel,
                     "frame_idx": ri, "wall_ts": wall_ts, "burst_id": bid}
             jl.write("snapshots.jsonl", snap)
 
             json.dump({"burst_id": bid, "status": "OK", **gb,
                        "night_state": ns_rec,
-                       "lamps": lamps_out, "candidates": cands, "snapshot": snap,
+                       "lamps": lamps_out, "snapshot": snap,
                        "elapsed_s": round(time.time() - t0, 1),
                        "disk_free_GB": round(shutil.disk_usage(out).free / 1e9, 1)},
                       open(os.path.join(out, "bursts", bid + ".json"), "w", encoding="utf-8"),
@@ -352,15 +312,15 @@ def main():
                 st = next((l for l in lamps_out if l.get("control") == "steady_check"), None)
                 print("[%s] burst=OK fps=%.2f frames=%s registry=%s/frozen night=%s "
                       "%s:A=%s/B=%s %s:A=%s/B=%s "
-                      "ac%s=%s d%s=%s cands=%s" %
+                      "ac%s=%s d%s=%s" %
                       (bid, burst_fps, burst_len, reg["registry_count"], state,
                        pos["lamp_id"] if pos else "?", pos["profile_A"] if pos else "?",
                        pos["profile_B"] if pos else "?",
                        st["lamp_id"] if st else "?", st["profile_A"] if st else "?",
                        st["profile_B"] if st else "?",
                        pos["lamp_id"] if pos else "?", pos["ac"] if pos else "?",
-                       pos["lamp_id"] if pos else "?", pos["duty"] if pos else "?",
-                       len(cands)), flush=True)
+                       pos["lamp_id"] if pos else "?", pos["duty"] if pos else "?"),
+                      flush=True)
         except Exception as e:
             jl.write("errors.jsonl", {"burst_id": bid, "burst_status": "failed",
                                       "failure_reason": "%s:%s" % (type(e).__name__, e)})
@@ -391,12 +351,11 @@ def build_summary(out):
         n_b += 1
         for l in d["lamps"]:
             s = lamps.setdefault(l["lamp_id"], {"x": l["x"], "y": l["y"], "control": l.get("control", "normal"),
-                                                "origin": l.get("origin", ""), "A": [], "B": [], "C": [],
+                                                "origin": l.get("origin", ""), "A": [], "B": [],
                                                 "F2": [], "S": [], "swing": [],
                                                 "ac": [], "duty": [], "n_on": []})
             s["A"].append(l["profile_A"])
             s["B"].append(l["profile_B"])
-            s["C"].append(l["profile_C"])
             s["F2"].append(l.get("profile_F2", 0))
             s["S"].append(l.get("profile_S", 0))
             s["swing"].append(l.get("f2_swing", 0.0))
@@ -410,7 +369,6 @@ def build_summary(out):
         per[lid] = {"x": s["x"], "y": s["y"], "control": s["control"], "origin": s["origin"],
                     "n": len(s["A"]), "A_rate": round(float(np.mean(s["A"])), 3),
                     "B_rate": round(float(np.mean(s["B"])), 3),
-                    "C_rate": round(float(np.mean(s["C"])), 3),
                     "F2_rate": round(float(np.mean(s["F2"])), 3),
                     "S_rate": round(float(np.mean(s["S"])), 3),
                     "mean_ac": round(float(a.mean()), 3), "std_ac": round(float(a.std()), 3),

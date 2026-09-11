@@ -27,7 +27,9 @@ cameras:
       water_gap:
         enabled: true
         calibration: "water_barrier/configs/1749.yaml"
-      # night_lamp 未接入 server（仍走 night_lamp/main.py 独立运行），不占位
+      night_lamp:
+        enabled: true
+        calibration: "night_lamp/configs/config_1749.yaml"
 
   - id: "1750"
     name: "Mobile Camera 1750"

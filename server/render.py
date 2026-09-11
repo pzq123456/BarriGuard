@@ -34,7 +34,7 @@ def draw_annots(vis, annots):
 
 
 def draw_status(vis, status: str):
-    """非 OK 状态（SUNGLARE 等）在画面压横幅：盲区必须看得见，不能静默。"""
+    """非 OK 状态在画面压横幅：盲区必须看得见，不能静默。"""
     if status == "OK":
         return vis
     cv.putText(vis, status, (20, 50),

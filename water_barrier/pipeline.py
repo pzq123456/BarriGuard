@@ -26,11 +26,10 @@ from server.algo import AlgoResult, Annotation, Event
 from . import track as T
 from .signal import red_m, white_m
 
-# 时序确认参数（12 个，逐帧 RER 确认 + 状态机用，见 track.py）。
+# 时序确认参数（11 个，逐帧 RER 确认 + 状态机用，见 track.py）。
 TRACK_KEYS = ("decay_rate", "alarm_hold_s", "reconfirm_s", "rer_threshold",
               "track_stale_s", "match_iou", "match_center_ratio",
-              "median_window", "intact_reset_s", "rer_purity", "patch_size",
-              "sunglare_road_white")
+              "median_window", "intact_reset_s", "rer_purity", "patch_size")
 
 # 检测参数（8 个，全顶层：前 4 support 累计用，后 4 signal.detect 成核用）。
 DETECT_KEYS = ("trim", "conf_th", "support_th", "min_box_width",
@@ -142,15 +141,9 @@ class WaterGapAlgorithm:
             return 0.0
 
     def step(self, frame, now):
-        """处理一帧：报警算法 -> 匹配轨道 -> 更新状态机。
-
-        SUNGLARE 只定状态（经 debug.frame_status 透出，UNKNOWN，不是 NORMAL），
-        不冻结检测：眩光帧的真缺口仍可能经 RER 确认，误报仍由 RER 挡。
-        """
+        """处理一帧：报警算法 -> 匹配轨道 -> 更新状态机（RER 确认挡误报）。"""
         tcfg = self._tcfg
-        road_white = _road_white_frac(frame, self._road_rects)
-        status = "SUNGLARE" if (self._road_rects
-                                and road_white > tcfg["sunglare_road_white"]) else "OK"
+        status = "OK"
         gaps = T.step_support(self._sup, frame)
 
         matched = {id(t): False for t in self._tracks}
@@ -180,28 +173,14 @@ class WaterGapAlgorithm:
         self._tracks = [t for t in self._tracks
                         if now - t["last_seen"] < tcfg["track_stale_s"]
                         or t["state"] != T.NORMAL]
-        annots = [Annotation("box", t["box"], t["state"], LEVEL[t["state"]],
-                             {"severity": t["severity"],
-                              "rer": round(float(t["rer"]), 3),
-                              "row_id": t["row_id"]})
-                  for t in self._tracks]
+        annots = [Annotation("box", t["box"], t["state"], LEVEL[t["state"]])
+                   for t in self._tracks]
         events = [Event(self._cam, "water_gap", now,
                         "alarm" if t["state"] == T.ALARM else "suspected",
                         {"box": t["box"], "severity": t["severity"],
                          "rer": round(float(t["rer"]), 3), "row_id": t["row_id"]})
                   for t in self._tracks if t["state"] != T.NORMAL]
-        return AlgoResult(events, annots, {"roi_mask": self.fg, "frame_status": status,
-                                           "road_white": round(road_white, 3)})
-
-
-def _road_white_frac(frame, rects):
-    """路面取色框的 white 占比中位数（日光门控用；无框时返回 0 即不过门）。"""
-    vals = []
-    for rx0, ry0, rx1, ry1 in rects:
-        crop = frame[max(0, ry0):ry1, max(0, rx0):rx1]
-        if crop.size > 0:
-            vals.append(float((white_m(crop)).mean()))
-    return float(np.median(vals)) if vals else 0.0
+        return AlgoResult(events, annots, {"roi_mask": self.fg, "frame_status": status})
 
 
 def _roi_mask(frame_shape, polys):

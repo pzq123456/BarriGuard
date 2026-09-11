@@ -21,15 +21,25 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 def offscreen(params, img_path: str, repeat: int = 14, camera: str = None,
-               outdir: str = "water_barrier/output") -> None:
-    """不依赖 HTTP 的端到端校验：对同一帧重复喂给算法，观察事件收敛。"""
+               outdir: str = "water_barrier/output",
+               algo: str = "water_gap") -> None:
+    """不依赖 HTTP 的端到端校验：对同一帧重复喂给算法，观察事件收敛。
+
+    只适用于单帧算法（同一帧喂 N 遍）；时序算法（night_lamp，靠连续
+    不同帧 + 去重）用静态帧验不出东西，明确拒绝，不静默跑错。
+    """
     cams = [c for c in params["cameras"] if c["algos"]]
     if camera:
         cams = [c for c in cams if c["id"] == camera]
     if not cams:
         raise RuntimeError("所选相机没有启用的算法")
     cam = cams[0]
-    name = sorted(cam["algos"])[0]
+    if algo not in cam["algos"]:
+        raise RuntimeError("相机 %s 未启用算法 %s（可用：%s）"
+                           % (cam["id"], algo, sorted(cam["algos"])))
+    if algo != "water_gap":
+        raise RuntimeError("%s 是时序算法，offscreen 静态帧模式不适用" % algo)
+    name = algo
     frame = cv.imread(img_path)
     algo = registry.create(name, frame.shape, cam["algos"][name], cam["id"])
     os.makedirs(outdir, exist_ok=True)
@@ -53,11 +63,13 @@ def main():
     ap.add_argument("--offscreen", metavar="IMG", help="离线验证模式(喂同一帧N遍)")
     ap.add_argument("--repeat", type=int, default=14)
     ap.add_argument("--camera", help="离线验证用的相机 id（默认首个有算法的相机）")
+    ap.add_argument("--algo", default="water_gap", help="离线验证用的算法（默认 water_gap）")
     args = ap.parse_args()
 
     params = load(args.config)
     if args.offscreen:
-        offscreen(params, args.offscreen, args.repeat, args.camera)
+        offscreen(params, args.offscreen, args.repeat, args.camera,
+                  algo=args.algo)
         return
 
     import uvicorn

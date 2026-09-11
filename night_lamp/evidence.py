@@ -59,6 +59,10 @@ class Jsonl:
     def write(self, name, obj):
         self._fhs[name].write(json.dumps(obj, ensure_ascii=False) + "\n")
 
+    def flush(self):
+        for fh in self._fhs.values():
+            fh.flush()
+
     def close(self):
         for fh in self._fhs.values():
             fh.close()

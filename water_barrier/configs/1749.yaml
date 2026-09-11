@@ -29,6 +29,4 @@ track:
   median_window: 5      # 旧标定（中值帧抗瞬时遮挡）
   intact_reset_s: 5.0   # 旧标定
   rer_purity: 0.70      # 旧标定
-  patch_size: 8         # 旧标定
-  # R4 实测：1749 路面中位 0.37（最高框 0.51），1750 日光 0.83；只定状态不冻结。
-  sunglare_road_white: 0.65
+  patch_size: 8          # 旧标定

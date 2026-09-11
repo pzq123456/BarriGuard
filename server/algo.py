@@ -30,7 +30,6 @@ class Annotation:
     box: tuple = ()      # box 用 (x0,y0,x1,y1), point 用 (x,y)
     label: str = ""
     level: str = "info"  # "alarm" | "suspected" | "info" (server 通用配色)
-    extra: dict = field(default_factory=dict)
 
 
 @dataclass
