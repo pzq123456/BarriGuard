@@ -1,0 +1,21 @@
+# deploy/ build context exclusions.
+# MUST keep: backend/, scripts/, frontend/ sources (built in the Node stage),
+# Dockerfile, docker-compose.yml
+# MUST exclude: models + config (mounted at runtime, never baked), session
+# history, caches, tests, temp files.
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+logs/
+# runtime-mounted, not baked: model weights + deployment config
+models/
+config.yaml
+config.example.yaml
+# session history is runtime persistent data, mounted at /app/data/sessions
+data/sessions/
+test/
+*.md
+.DS_Store

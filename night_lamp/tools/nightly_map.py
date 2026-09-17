@@ -41,15 +41,23 @@ RENDER_DUTY_LO = 0.005  # soft floor: below this, paint fades to transparent
 RENDER_GAMMA = 0.7  # <1 lifts mid duties; INFERNO's low end is too dark
 DIM_DYNAMIC = 0.35  # dim, not delete: dynamic wash stays visible but grayed
 DIM_REFLECT = 0.45
+DYN_PEAK_FLOOR = 0.02  # local duty max inside a dyn blob = lamp core candidate
+DYN_PEAK_WIN = 9       # local-max window (px) for dyn lamp cores
+DYN_MAX_PEAK = 200     # cap on dyn lamp-core points sent to the periodicity pass
+HALO_DARK = 0.45       # darken a band around painted marks (contrast on bright ground)
+HALO_WIN = 7           # halo band width (px)
 DESPECKLE_FLOOR = 0.003  # shape floor: below this, a pixel is not a blob
 DESPECKLE_K = 5     # neighborhood for the blob test
 DESPECKLE_MIN = 3   # need this many neighbors (incl. self) to be painted
 DAY_ALPHA = 0.9     # heat opacity over the day base
 DAY_LO = 0.05       # day base: duty below this stays invisible
 DAY_HI = 0.30       # day base: duty at/above this is fully painted
+DAY_BG_SAT = 0.70   # day base: 1 = unchanged, 0 = grayscale
+DAY_BG_DARK = 0.90  # day base brightness scale
 CMAPS = {"inferno": cv.COLORMAP_INFERNO, "turbo": cv.COLORMAP_TURBO,
          "magma": cv.COLORMAP_MAGMA, "plasma": cv.COLORMAP_PLASMA,
-         "jet": cv.COLORMAP_JET, "viridis": cv.COLORMAP_VIRIDIS}
+         "jet": cv.COLORMAP_JET, "viridis": cv.COLORMAP_VIRIDIS,
+         "ice": "ice"}
 MAX_CAND = 600
 PERIOD_STEP = 2     # stage-B fine sampling; ~3.5 samples per 0.56s flash
 LAG_LO_S = 0.3      # AC window lower bound (seconds)
@@ -59,7 +67,6 @@ MIN_PEAKS = 3       # clean train needs this many internal maxima
 GAP_TOL = 1         # consecutive peak gaps must differ by <= this
 ONSET_MIN = 50      # too few flashes -> trust duty, not periodicity
 FLASH_R = 15        # disk painted around a flashed dyn sample
-DYN_PER_COMP = 25   # dyn samples per blob
 STEADY_LO = 0.5     # steady gate sigmoid center (duty)
 STEADY_W = 0.08     # steady gate sigmoid width
 
@@ -115,22 +122,35 @@ def med_series(video, step):
     return np.array(meds, np.float32), i
 
 
-def night_base(video, idxs, mask, detrend):
-    """Per-pixel night baseline from K spread frames (masked + detrended)."""
+def spread_gray(video, idxs):
+    """Seek/read pass yielding grayscale frames at the given indices."""
     cap = cv.VideoCapture(video)
     if not cap.isOpened():
         raise RuntimeError("open failed: " + video)
-    acc = []
     for j in idxs:
         cap.set(cv.CAP_PROP_POS_FRAMES, j)
         ok, fr = cap.read()
         if ok:
-            g = cv.cvtColor(fr, cv.COLOR_BGR2GRAY)
-            off = int(round(float(np.median(g)) - detrend)) if detrend else 0
-            acc.append(prep(g, mask, off))
+            yield cv.cvtColor(fr, cv.COLOR_BGR2GRAY)
     cap.release()
+
+
+def night_base(video, idxs, mask, detrend):
+    """Per-pixel night baseline from K spread frames (masked + detrended)."""
+    acc = []
+    for g in spread_gray(video, idxs):
+        off = int(round(float(np.median(g)) - detrend)) if detrend else 0
+        acc.append(prep(g, mask, off))
     if not acc:
         raise RuntimeError("no baseline frames: " + video)
+    return np.median(np.stack(acc), axis=0)
+
+
+def bg_median(video, idxs):
+    """Unmasked per-pixel median: render background without OSD black boxes."""
+    acc = list(spread_gray(video, idxs))
+    if not acc:
+        raise RuntimeError("no background frames: " + video)
     return np.median(np.stack(acc), axis=0)
 
 
@@ -261,10 +281,28 @@ def despeckle(duty, floor, k, min_n):
     return b & (cnt >= min_n)
 
 
+def ice_lut():
+    """Black -> teal -> cyan -> white; cold ramp, opposite the amber lamps."""
+    stops = np.array([[0.00, 0, 0, 0],
+                      [0.40, 128, 255, 0],
+                      [0.75, 255, 255, 0],
+                      [1.00, 255, 255, 255]], np.float32)
+    x = np.linspace(0.0, 1.0, 256)
+    lut = np.empty((256, 3), np.uint8)
+    for c in range(3):
+        lut[:, c] = np.interp(x, stops[:, 0], stops[:, c + 1])
+    return lut
+
+
+ICE_LUT = ice_lut()
+
+
 def heat_bgr(duty, top, gamma, cmap):
     """Colormap of (duty/top)^gamma; dim applied by the caller."""
-    t = np.clip(duty / top, 0, 1) ** gamma
-    return cv.applyColorMap((t * 255).astype(np.uint8), cmap).astype(np.float32)
+    idx = (np.clip(duty / top, 0, 1) ** gamma * 255).astype(np.uint8)
+    if isinstance(cmap, str):
+        return ICE_LUT[idx].astype(np.float32)
+    return cv.applyColorMap(idx, cmap).astype(np.float32)
 
 
 def alpha_of(duty, keep, lo, scale):
@@ -290,6 +328,50 @@ def compose(heat, alpha, bg_bgr):
 def night_bg(base):
     return cv.cvtColor((np.clip(base, 0, 255) * 0.35).astype(np.uint8),
                        cv.COLOR_GRAY2BGR)
+
+
+def mute_bg(bgr, sat, dark):
+    """Desaturate + darken a background so the heat ramp pops."""
+    g3 = cv.cvtColor(cv.cvtColor(bgr, cv.COLOR_BGR2GRAY), cv.COLOR_GRAY2BGR)
+    out = bgr.astype(np.float32) * sat + g3.astype(np.float32) * (1 - sat)
+    return np.clip(out * dark, 0, 255).astype(np.uint8)
+
+
+def halo_bg(bg_bgr, mark):
+    """Darken a band around painted marks so heat reads on bright ground."""
+    band = cv.dilate(mark.astype(np.uint8),
+                     np.ones((HALO_WIN, HALO_WIN), np.uint8)) > 0
+    band &= ~mark
+    out = bg_bgr.astype(np.float32)
+    out[band] *= HALO_DARK
+    return out.astype(np.uint8)
+
+
+def draw_bar(img, cmap, title):
+    """Vertical colorbar (low bottom, high top) with a title, top-right."""
+    h, w = img.shape[:2]
+    bw, bh = 16, int(h * 0.30)
+    x0, y0 = w - bw - 24, int(h * 0.14)
+    ramp = np.linspace(0, 255, bh).astype(np.uint8)[:, None]
+    strip = np.repeat(ramp, bw, axis=1)
+    bar = ICE_LUT[strip] if isinstance(cmap, str) else cv.applyColorMap(strip, cmap)
+    bar = np.flipud(bar)
+    cv.rectangle(img, (x0 - 1, y0 - 1), (x0 + bw, y0 + bh), (255, 255, 255), 1)
+    img[y0:y0 + bh, x0:x0 + bw] = bar
+    cv.putText(img, title, (x0 - 6 * len(title), y0 - 8),
+               cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv.LINE_AA)
+    return img
+
+
+def draw_caption(img, text):
+    """Translucent dark strip + caption along the bottom edge."""
+    h, w = img.shape[:2]
+    band = img.copy()
+    cv.rectangle(band, (0, h - 34), (w, h), (0, 0, 0), -1)
+    out = cv.addWeighted(band, 0.5, img, 0.5, 0)
+    cv.putText(out, text, (12, h - 11), cv.FONT_HERSHEY_SIMPLEX, 0.6,
+               (255, 255, 255), 1, cv.LINE_AA)
+    return out
 
 
 def align_day(day_bgr, ref_gray):
@@ -323,18 +405,26 @@ def fine_meds(meds, step, fine_step, scanned):
     return np.interp(np.arange(n_fine) * fine_step, src, meds).astype(np.float32)
 
 
-def dyn_samples(dyn, lab, stats, per):
-    """Spread points inside each dynamic blob (wash AND embedded lamps)."""
+def dyn_samples(duty, dyn, cap=DYN_MAX_PEAK):
+    """Lamp-core points inside dynamic blobs: local duty maxima, not spread.
+
+    A dense lamp chain (or a lamp inside its own glow) merges into one blob
+    far larger than DYN_MIN_AREA, so uniform spread sampling misses most
+    lamps. Local maxima track the lamps themselves, so every embedded
+    flasher gets a fair periodicity test before the blob is written off as
+    headlight wash.
+    """
+    d = np.where(dyn, duty, 0.0).astype(np.float32)
+    mx = cv.dilate(d, np.ones((DYN_PEAK_WIN, DYN_PEAK_WIN), np.float32))
+    peaks = (d >= mx) & (d >= DYN_PEAK_FLOOR) & dyn
+    num, lab = cv.connectedComponents(peaks.astype(np.uint8), 8)
     pts = []
-    for c in range(1, len(stats)):
-        if stats[c, cv.CC_STAT_AREA] < DYN_MIN_AREA:
-            continue
-        ys, xs = np.nonzero(dyn & (lab == c))
-        if ys.size == 0:
-            continue
-        for k in np.linspace(0, ys.size - 1, min(per, ys.size)).astype(int):
-            pts.append((int(ys[k]), int(xs[k])))
-    return pts
+    for c in range(1, num):
+        ys, xs = np.nonzero(lab == c)
+        j = int(np.argmax(d[ys, xs]))
+        pts.append((int(ys[j]), int(xs[j]), float(d[ys[j], xs[j]])))
+    pts.sort(key=lambda p: -p[2])   # strongest cores first when capped
+    return [(y, x) for y, x, _ in pts[:cap]]
 
 
 def steady_gate(duty, lo=STEADY_LO, w=STEADY_W):
@@ -363,8 +453,8 @@ def main():
     ap.add_argument("--day-alpha", type=float, default=DAY_ALPHA)
     ap.add_argument("--day-lo", type=float, default=DAY_LO)
     ap.add_argument("--day-hi", type=float, default=DAY_HI)
-    ap.add_argument("--cmap", default="inferno", choices=sorted(CMAPS))
-    ap.add_argument("--day-cmap", default="turbo", choices=sorted(CMAPS))
+    ap.add_argument("--cmap", default="ice", choices=sorted(CMAPS))
+    ap.add_argument("--day-cmap", default="inferno", choices=sorted(CMAPS))
     ap.add_argument("--roi", default=None, help="water_barrier calib yaml")
     ap.add_argument("--no-detrend", action="store_true")
     a = ap.parse_args()
@@ -383,7 +473,9 @@ def main():
     meds, scanned = med_series(a.video, a.step)
     night_med = float(np.median(meds))
     detrend = 0.0 if a.no_detrend else night_med
-    base = night_base(a.video, base_index(total, a.baseline_n), mask, detrend)
+    idxs = base_index(total, a.baseline_n)
+    base = night_base(a.video, idxs, mask, detrend)
+    bg = bg_median(a.video, idxs)
     duty, swing, n = duty_swing(a.video, base, a.step, meds, night_med,
                                 mask, a.delta)
 
@@ -413,8 +505,16 @@ def main():
     # Stage B: periodicity, candidates only. A clean AC train (equal spacing)
     # = flasher; monotone decay = one-off transit; near-steady high duty is
     # caught by the steady gate instead. Only dims/reflections stay artifacts.
-    dyn_pts = dyn_samples(dyn, lab, stats, DYN_PER_COMP)
-    sb = series_for(a.video, PERIOD_STEP, pts + dyn_pts,
+    # Test the max-DUTY pixel (lamp core), not max-swing: the swing peak sits
+    # on the glow edge where the baseline is already high, so a real flasher
+    # reads as flat there and gets dropped.
+    fpts = []
+    for c in cand:
+        ys, xs = np.nonzero(lab == c)
+        j = int(np.argmax(duty[ys, xs]))
+        fpts.append((int(ys[j]), int(xs[j])))
+    dyn_pts = dyn_samples(duty, dyn)
+    sb = series_for(a.video, PERIOD_STEP, fpts + dyn_pts,
                     fine_meds(meds, a.step, PERIOD_STEP, scanned),
                     night_med, mask)
     lag_lo = max(1, int(round(LAG_LO_S * fps / PERIOD_STEP)))
@@ -430,7 +530,7 @@ def main():
     flash = np.zeros((h, w), np.uint8)
     n_flash = 0
     for i, c in enumerate(cand):
-        if flashing(i, *pts[i]):
+        if flashing(i, *fpts[i]):
             flash[lab == c] = 1
             n_flash += 1
     for j, (y, x) in enumerate(dyn_pts):
@@ -444,11 +544,13 @@ def main():
     gate = np.maximum(flash.astype(np.float32), steady_gate(duty))
 
     keep = despeckle(duty, a.desp_floor, a.desp_k, a.desp_min)
+    paint = keep & (gate > 0.5)
     heat = heat_bgr(duty, top, a.gamma, CMAPS[a.cmap]) * dim[..., None]
     vis = compose(heat,
                   alpha_of(duty, keep, a.render_lo, BLEND)
                   * (dim * gate)[..., None],
-                  night_bg(base))
+                  halo_bg(night_bg(bg), paint))
+    draw_bar(vis, CMAPS[a.cmap], "flash duty")
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     cv.imwrite(a.out, vis)
 
@@ -457,11 +559,16 @@ def main():
         day = cv.imread(a.day)
         if day is None:
             raise RuntimeError("day image not found: " + a.day)
-        day, dx, dy, cc = align_day(day, np.clip(base, 0, 255))
+        day, dx, dy, cc = align_day(day, np.clip(bg, 0, 255))
         dheat = heat_bgr(duty, top, a.gamma, CMAPS[a.day_cmap]) * dim[..., None]
         dalpha = (alpha_ramp(duty, keep, a.day_lo, a.day_hi, a.day_alpha)
                   * (dim * gate)[..., None])
-        dvis = compose(dheat, dalpha, day)
+        dvis = compose(dheat, dalpha,
+                       halo_bg(mute_bg(day, DAY_BG_SAT, DAY_BG_DARK), paint))
+        draw_bar(dvis, CMAPS[a.day_cmap], "flash duty")
+        dvis = draw_caption(
+            dvis, "night %s  duty>=%.2f  delta=%d  p99=%.3f"
+            % (os.path.basename(a.video), a.day_lo, a.delta, top))
         dout = os.path.splitext(a.out)[0] + "_day.jpg"
         cv.imwrite(dout, dvis)
         shift = {"day": a.day, "dx": round(dx, 2), "dy": round(dy, 2),

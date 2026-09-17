@@ -1,0 +1,19 @@
+services:
+  BarriGuard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: BarriGuard:latest
+    container_name: BarriGuard
+    ports:
+      - "18080:8000"                 # host:container
+    volumes:
+      # runtime config: change model/thresholds/auth, then restart
+      - ./config.yaml:/app/config.yaml:ro
+      # model weights: swap .pt on the host, then restart
+      - ./models:/app/models:ro
+      # persistent data: sessions live at /app/data/sessions (config.server.sessions_dir)
+      - ./data:/app/data
+    cpus: "2"                        # Pre-Phase 6 recommended budget
+    mem_limit: 4g
+    restart: unless-stopped
