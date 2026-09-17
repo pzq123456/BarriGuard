@@ -1,21 +1,33 @@
-# deploy/ build context exclusions.
-# MUST keep: backend/, scripts/, frontend/ sources (built in the Node stage),
-# Dockerfile, docker-compose.yml
-# MUST exclude: models + config (mounted at runtime, never baked), session
-# history, caches, tests, temp files.
-.git/
+# deploy/ 构建上下文排除规则（context = deploy/）。
+# 镜像只需 server/ water_barrier/ night_lamp/ 三个包。
+
+# VCS / 缓存
+.git
+.gitignore
 __pycache__/
-*.pyc
-.pytest_cache/
+*.py[cod]
 .venv/
-node_modules/
-logs/
-# runtime-mounted, not baked: model weights + deployment config
-models/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行期挂载，不烘进镜像
 config.yaml
-config.example.yaml
-# session history is runtime persistent data, mounted at /app/data/sessions
-data/sessions/
-test/
+
+# 运行产物 / 大文件（决策数据不落盘，但本机残留也别打进镜像）
+evidence/
+logs/
+tmp/
+data/
+results/
+output/
+night_lamp/output/
+*.mp4
+*.npy
+*.pdf
+
+# 部署脚手架自身
+Dockerfile
+docker-compose.yml
+.dockerignore
 *.md
-.DS_Store

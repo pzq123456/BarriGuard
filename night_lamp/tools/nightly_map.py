@@ -44,8 +44,10 @@ DIM_REFLECT = 0.45
 DYN_PEAK_FLOOR = 0.02  # local duty max inside a dyn blob = lamp core candidate
 DYN_PEAK_WIN = 9       # local-max window (px) for dyn lamp cores
 DYN_MAX_PEAK = 200     # cap on dyn lamp-core points sent to the periodicity pass
-HALO_DARK = 0.45       # darken a band around painted marks (contrast on bright ground)
-HALO_WIN = 7           # halo band width (px)
+RING_COLOR = (0, 255, 0)  # BGR green ring: reads on day concrete and night
+RING_THICK = 2            # ring stroke width (px)
+RING_PAD = 3              # candidate ring radius = half bbox + pad
+RING_R = 9                # dyn lamp-core ring radius (px)
 DESPECKLE_FLOOR = 0.003  # shape floor: below this, a pixel is not a blob
 DESPECKLE_K = 5     # neighborhood for the blob test
 DESPECKLE_MIN = 3   # need this many neighbors (incl. self) to be painted
@@ -337,14 +339,11 @@ def mute_bg(bgr, sat, dark):
     return np.clip(out * dark, 0, 255).astype(np.uint8)
 
 
-def halo_bg(bg_bgr, mark):
-    """Darken a band around painted marks so heat reads on bright ground."""
-    band = cv.dilate(mark.astype(np.uint8),
-                     np.ones((HALO_WIN, HALO_WIN), np.uint8)) > 0
-    band &= ~mark
-    out = bg_bgr.astype(np.float32)
-    out[band] *= HALO_DARK
-    return out.astype(np.uint8)
+def draw_rings(img, rings):
+    """Outline each flashing lamp with a ring at its center."""
+    for x, y, r in rings:
+        cv.circle(img, (x, y), r, RING_COLOR, RING_THICK, cv.LINE_AA)
+    return img
 
 
 def draw_bar(img, cmap, title):
@@ -527,15 +526,20 @@ def main():
         curve = ac_limited(on, lag_lo, lag_hi)[2]
         return clean_train(curve, lag_lo, PEAK_FLOOR, MIN_PEAKS, GAP_TOL)[0]
 
+    rings = []
     flash = np.zeros((h, w), np.uint8)
     n_flash = 0
     for i, c in enumerate(cand):
         if flashing(i, *fpts[i]):
             flash[lab == c] = 1
+            r = max(stats[c, cv.CC_STAT_WIDTH],
+                    stats[c, cv.CC_STAT_HEIGHT]) // 2 + RING_PAD
+            rings.append((fpts[i][1], fpts[i][0], r))
             n_flash += 1
     for j, (y, x) in enumerate(dyn_pts):
         if flashing(len(cand) + j, y, x):
             cv.circle(flash, (x, y), FLASH_R, 1, -1)
+            rings.append((x, y, RING_R))
             n_flash += 1
     flash = flash > 0
 
@@ -544,12 +548,12 @@ def main():
     gate = np.maximum(flash.astype(np.float32), steady_gate(duty))
 
     keep = despeckle(duty, a.desp_floor, a.desp_k, a.desp_min)
-    paint = keep & (gate > 0.5)
     heat = heat_bgr(duty, top, a.gamma, CMAPS[a.cmap]) * dim[..., None]
     vis = compose(heat,
                   alpha_of(duty, keep, a.render_lo, BLEND)
                   * (dim * gate)[..., None],
-                  halo_bg(night_bg(bg), paint))
+                  night_bg(bg))
+    draw_rings(vis, rings)
     draw_bar(vis, CMAPS[a.cmap], "flash duty")
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     cv.imwrite(a.out, vis)
@@ -563,8 +567,8 @@ def main():
         dheat = heat_bgr(duty, top, a.gamma, CMAPS[a.day_cmap]) * dim[..., None]
         dalpha = (alpha_ramp(duty, keep, a.day_lo, a.day_hi, a.day_alpha)
                   * (dim * gate)[..., None])
-        dvis = compose(dheat, dalpha,
-                       halo_bg(mute_bg(day, DAY_BG_SAT, DAY_BG_DARK), paint))
+        dvis = compose(dheat, dalpha, mute_bg(day, DAY_BG_SAT, DAY_BG_DARK))
+        draw_rings(dvis, rings)
         draw_bar(dvis, CMAPS[a.day_cmap], "flash duty")
         dvis = draw_caption(
             dvis, "night %s  duty>=%.2f  delta=%d  p99=%.3f"

@@ -1,0 +1,36 @@
+# =============================================================================
+# BarriGuard 运行期配置（部署覆盖用，挂载到容器 /app/server/config.yaml）
+# =============================================================================
+# 与 server/config.yaml 同构，仅把 host 改成 0.0.0.0：容器里监听必须绑到
+# 所有网卡，否则 127.0.0.1 无法被宿主端口映射访问。
+# 标定路径相对镜像内仓库根 (/app) 解析，故写法与仓库内一致。
+# =============================================================================
+
+server:
+  host: "0.0.0.0"        # 容器内必须 0.0.0.0（本仓库默认 127.0.0.1）
+  port: 8000
+  jpeg_quality: 80
+  preview_interval_s: 0.1
+  evidence_resave_s: 300.0
+
+cameras:
+  - id: "1749"
+    name: "Mobile Camera 1749"
+    rtsp_url: "rtsp://118.140.234.166:8554/dahua1002490"
+    enabled: true
+    algorithms:
+      water_gap:
+        enabled: true
+        calibration: "water_barrier/configs/1749.yaml"
+      night_lamp:
+        enabled: true
+        calibration: "night_lamp/configs/config_1749.yaml"
+
+  - id: "1750"
+    name: "Mobile Camera 1750"
+    rtsp_url: "rtsp://118.140.234.166:8554/dahua1002491"
+    enabled: true        # 视频流 + 水马检测（参数 copy 1749，待重标）
+    algorithms:
+      water_gap:
+        enabled: true
+        calibration: "water_barrier/configs/1750.yaml"
