@@ -659,7 +659,7 @@ FROZEN_SIGNATURES = {
     "server.reporting": [
         ("Reporter.__init__", ["self", "cfg"]),
         ("Reporter.submit", ["self", "report"]),
-        ("Reporter.submit_event", ["self", "event"]),
+        ("Reporter.submit_event", ["self", "event", "image_jpeg"]),
         ("Reporter.close", ["self"]),
     ],
 }

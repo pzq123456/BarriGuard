@@ -8,7 +8,7 @@ Webhook 接收器 — 模拟第三方消费端
 启动方式:
     python local/webhook_receiver.py
     python local/webhook_receiver.py --port 8888
-    python local/webhook_receiver.py --save-dir evidence
+    python local/webhook_receiver.py --save-dir local/output
 """
 
 import argparse
@@ -56,23 +56,35 @@ class WebhookHandler(BaseHTTPRequestHandler):
         # ── 以下操作在 HTTP 响应之后执行，不影响发送端 ──
 
         # 1. 解码并保存证据帧（base64 主动剥离，避免 JSONL 膨胀）
+        #    兼容两种字段名：旧 frame_base64 / 新 Reporter 的 image_base64
         frame_saved_to = None
-        frame_b64 = payload.pop("frame_base64", None)
-        if frame_b64 and _save_dir:
+        frame_b64 = payload.pop("frame_base64", None) or payload.pop("image_base64", None)
+        if _save_dir:
             try:
                 camera_id = payload.get("camera_id", "unknown")
-                ts = payload.get("timestamp", datetime.now(timezone.utc).isoformat())
+                ts = (payload.get("timestamp") or payload.get("created_at")
+                      or datetime.now(timezone.utc).isoformat())
                 ts_str = ts[:19].replace(":", "").replace("T", "_")
+                alert_type = payload.get("alert_type") or payload.get("report_type") or "alert"
                 frame_dir = _save_dir / camera_id
                 frame_dir.mkdir(parents=True, exist_ok=True)
-                frame_path = frame_dir / f"{ts_str}.jpg"
-                frame_path.write_bytes(base64.b64decode(frame_b64))
-                frame_saved_to = str(frame_path)
-                logger.info("帧已保存: {}", frame_path)
+                # 计数后缀：避免同秒多次上报互相覆盖
+                stem = f"{ts_str}_{alert_type}_{count:04d}"
+                if frame_b64:
+                    frame_path = frame_dir / f"{stem}.jpg"
+                    frame_path.write_bytes(base64.b64decode(frame_b64))
+                    frame_saved_to = str(frame_path)
+                    logger.info("帧已保存: {}", frame_path)
+                # 每条 payload 另存一份 JSON（含 metadata，不含 base64）
+                meta_path = frame_dir / f"{stem}.json"
+                meta_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8")
+                logger.info("JSON 已保存: {}", meta_path)
             except Exception:
-                logger.exception("解码/保存帧失败")
+                logger.exception("解码/保存证据失败")
 
-        # 2. 推送数据追加到 JSONL（不含 frame_base64，避免日志膨胀）
+        # 2. 推送数据追加到 JSONL（不含 base64，避免日志膨胀）
         if _payload_log:
             record = {
                 "received_at": datetime.now(timezone.utc).isoformat(),
@@ -125,7 +137,8 @@ def main():
     parser = argparse.ArgumentParser(description="Webhook 接收器")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", "-p", type=int, default=9999)
-    parser.add_argument("--save-dir", default="alerts")
+    parser.add_argument("--save-dir",
+                        default=str(Path(__file__).resolve().parent / "output"))
     args = parser.parse_args()
 
     _save_dir = Path(args.save_dir)

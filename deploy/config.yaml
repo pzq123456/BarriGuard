@@ -38,7 +38,7 @@ callback:
   url: "http://host.docker.internal:9999/alert"
   timeout_s: 8
   queue_size: 64                  # 必须有界
-  image_field: "image_base64"
+  image_field: "frame_base64"
 
 cameras:
   - id: "1749"

@@ -282,14 +282,6 @@ class CameraWorker:
                 except Exception:
                     logger.exception("[{}] night on_frame 失败: {}", self.id, name)
 
-            for e in events:
-                if e.kind != "alarm":
-                    continue
-                try:
-                    self._reporter.submit_event(e)
-                except Exception:
-                    logger.exception("[{}] submit_event 失败", self.id)
-
             mask = debug.get("roi_mask")
             vis = render.draw_annots(
                 render.overlay(frame, mask) if mask is not None else frame, annots)
@@ -303,6 +295,14 @@ class CameraWorker:
                     if e.kind == "alarm" and e.evidence_path is None:
                         e.evidence_path = path
             ok, buf = cv.imencode(".jpg", vis, [cv.IMWRITE_JPEG_QUALITY, self._quality])
+            jpeg_bytes = buf.tobytes() if ok else None
+            for e in events:
+                if e.kind != "alarm":
+                    continue
+                try:
+                    self._reporter.submit_event(e, image_jpeg=jpeg_bytes)
+                except Exception:
+                    logger.exception("[{}] submit_event 失败", self.id)
             with self._lock:
                 self._vis = buf.tobytes() if ok else None
                 self._debug = debug

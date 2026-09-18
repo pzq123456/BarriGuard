@@ -17,7 +17,7 @@ import queue
 import threading
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 from loguru import logger
 
@@ -31,6 +31,27 @@ _CLOSE_JOIN_TIMEOUT_S = 5.0
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat()
+
+
+def _utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _to_utc(value: str | None) -> str:
+    """把 ISO 字符串（任意时区）统一为 UTC ISO；失败回退当前 UTC。"""
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    except Exception:
+        return _utc_iso()
+
+
+def _report_alert_type(report_type: str) -> str:
+    """Report.report_type -> 对外业务名 alert_type（只有两个业务名）。"""
+    return {"gap_overlay": "water_gap", "night_heatmap": "night_heatmap"}.get(
+        report_type, report_type or "report")
 
 
 def _target(e) -> str:
@@ -101,10 +122,10 @@ class Reporter:
         """入队一条图片 Report；永不阻塞、永不抛出。"""
         if not self._enabled or self._closed:
             return
-        self._enqueue(("report", report))
+        self._enqueue(("report", report, None))
 
-    def submit_event(self, event) -> None:
-        """入队一条告警 Event（带 (camera, algo, target) 节流）。"""
+    def submit_event(self, event, image_jpeg: bytes | None = None) -> None:
+        """入队一条告警 Event（只推 alarm），可附当前帧 JPEG。"""
         if not self._enabled or self._closed:
             return
         if getattr(event, "kind", None) != "alarm":
@@ -118,7 +139,7 @@ class Reporter:
             if now - self._last.get(key, 0.0) < interval:
                 return
             self._last[key] = now
-        self._enqueue(("event", event))
+        self._enqueue(("event", event, image_jpeg))
 
     def close(self) -> None:
         """停止后台线程；幂等，最多等待 ``_CLOSE_JOIN_TIMEOUT_S``。"""
@@ -172,9 +193,8 @@ class Reporter:
                 self._q.task_done()
 
     def _send(self, item) -> None:
-        kind, payload = item
-        body = (self._body_report(payload) if kind == "report"
-                else self._body_event(payload))
+        kind, payload, image = item
+        body = self._body(kind, payload, image)
         if body is None:
             return
         req = urllib.request.Request(
@@ -186,37 +206,27 @@ class Reporter:
             logger.warning("[reporter] 上报失败({}): {}: {}",
                            kind, type(e).__name__, e)
 
-    def _body_report(self, report: Report) -> bytes | None:
-        obj = {
-            "type": "report",
-            "camera_id": report.camera,
-            "camera_name": self._camera_name.get(report.camera, report.camera),
-            "algorithm": report.algorithm,
-            "report_type": report.report_type,
-            "created_at": report.created_at,
-            "status": report.status,
-            "metadata": report.metadata,
-        }
-        if report.image_jpeg:
-            obj[self._image_field] = base64.b64encode(
-                report.image_jpeg).decode("ascii")
-        return json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
+    def _body(self, kind, obj, image) -> bytes | None:
+        """最简统一 payload：alert_type + camera + UTC timestamp + frame_base64。"""
+        if kind == "report":
+            alert_type = _report_alert_type(getattr(obj, "report_type", ""))
+            camera_id = getattr(obj, "camera", "")
+            ts = _to_utc(getattr(obj, "created_at", None))
+            if not image:
+                image = getattr(obj, "image_jpeg", None)
+        else:  # event
+            alert_type = getattr(obj, "algo", "") or "event"
+            camera_id = getattr(obj, "camera_id", "")
+            ts = _utc_iso()
 
-    def _body_event(self, event: Event) -> bytes | None:
-        payload = getattr(event, "payload", None) or {}
-        conf = payload.get("rer", payload.get("swing", 0.0))
-        obj = {
-            "type": "event",
-            "camera_id": event.camera_id,
-            "camera_name": self._camera_name.get(event.camera_id, event.camera_id),
-            "timestamp": _now_iso(),
-            "kind": event.kind,
-            "algo": event.algo,
-            "objects": [{"class": event.algo, "confidence": conf,
-                         "bbox": _bbox(event)}],
-            "metadata": payload,
+        out = {
+            "alert_type": alert_type,
+            "camera_id": camera_id,
+            "camera_name": self._camera_name.get(camera_id, camera_id),
+            "timestamp": ts,
+            self._image_field: base64.b64encode(image).decode("ascii") if image else "",
         }
-        return json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
+        return json.dumps(out, ensure_ascii=False, default=str).encode("utf-8")
 
 
 # =============================================================================
