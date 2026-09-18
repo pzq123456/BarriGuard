@@ -16,13 +16,11 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from .config import load_runtime
-from .evidence import EvidenceWriter
 from .worker import Runtime
 
 _cfg = load_runtime(os.environ.get("BARRIGUARD_CONFIG") or None)
 _p = _cfg.server if isinstance(_cfg.server, dict) else {}
-_evidence = EvidenceWriter(resave_s=_p.get("evidence_resave_s", 300.0))
-_runtime = Runtime(_cfg, evidence=_evidence)
+_runtime = Runtime(_cfg)
 _workers = _runtime.workers
 _first = next(iter(_workers.values()), None)
 

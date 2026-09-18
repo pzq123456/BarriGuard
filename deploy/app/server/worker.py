@@ -20,7 +20,6 @@ import cv2 as cv
 from loguru import logger
 
 from . import registry, render
-from .evidence import EvidenceWriter
 from .schedule import (
     Clock, RealClock, RuntimeEvent, RuntimeEventType, Scheduler,
 )
@@ -94,7 +93,7 @@ def _load_calibration(name, spec):
 
 class CameraWorker:
     def __init__(self, camera, scheduler: Scheduler, reporter,
-                 jpeg_quality: int = 80, evidence: EvidenceWriter | None = None,
+                 jpeg_quality: int = 80, evidence=None,
                  clock: Clock | None = None,
                  day_factory=None, night_factory=None):
         self._camera = camera
@@ -104,7 +103,7 @@ class CameraWorker:
         self._reporter = reporter
         self._clock = clock or RealClock()
         self._quality = jpeg_quality
-        self._evidence = evidence if evidence is not None else EvidenceWriter()
+        self._evidence = evidence
         self._day_factory = day_factory or _default_day_runner
         self._night_factory = night_factory or _default_night_adapter
 
@@ -297,7 +296,8 @@ class CameraWorker:
             vis = render.draw_status(vis, status)
             alarming = any(e.kind == "alarm" for e in events)
             states = "+".join(sorted({a.level for a in annots}))
-            path = self._evidence.maybe_save(self.id, vis, alarming, states, now_mono)
+            path = (self._evidence.maybe_save(self.id, vis, alarming, states, now_mono)
+                    if self._evidence is not None else None)
             if path:
                 for e in events:
                     if e.kind == "alarm" and e.evidence_path is None:
@@ -321,7 +321,7 @@ class Runtime:
     """唯一 Scheduler 持有者：poll -> 分发事件到 workers / Reporter。"""
 
     def __init__(self, cfg, clock: Clock | None = None, reporter=None,
-                 evidence: EvidenceWriter | None = None,
+                 evidence=None,
                  day_factory=None, night_factory=None):
         self.cfg = cfg
         self.clock = clock or RealClock()

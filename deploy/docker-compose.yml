@@ -1,6 +1,6 @@
 # BarriGuard 部署编排。
-# 构建上下文 = 本目录（deploy/）。构建前把仓库的 server/ water_barrier/
-# night_lamp/ 放进本目录，再 docker compose up --build。
+# 构建上下文 = 本目录（deploy/），自包含：app/ 内即三个生产包。
+# 直接 docker compose up --build 即可。
 services:
   barriguard:
     build:
@@ -10,13 +10,13 @@ services:
     container_name: barriguard
     environment:
       - TZ=Asia/Shanghai
+      - BARRIGUARD_CONFIG=/app/config.yaml
     ports:
       - "18080:8000"                 # host:container
     volumes:
-      # 运行期配置覆盖镜像内 server/config.yaml。
-      # 必须挂到这个路径：server/app.py 调 config.load() 不传路径，
-      # 永远读 server/config.yaml（--config 参数对 HTTP 服务无效）。
-      - ./config.yaml:/app/server/config.yaml:ro
+      # 运行期配置覆盖镜像内兜底 config.yaml，路径与 env 一致。
+      # server/config.py 优先读 BARRIGUARD_CONFIG，回落到 ROOT/config.yaml。
+      - ./config.yaml:/app/config.yaml:ro
     cpus: "2"
     mem_limit: 4g
     restart: unless-stopped

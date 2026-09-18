@@ -1,5 +1,5 @@
 # deploy/ 构建上下文排除规则（context = deploy/）。
-# 镜像只需 server/ water_barrier/ night_lamp/ 三个包。
+# 镜像只需 app/（server/ water_barrier/ night_lamp/）与 config.yaml。
 
 # VCS / 缓存
 .git
@@ -11,10 +11,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# 运行期挂载，不烘进镜像
-config.yaml
-
-# 运行产物 / 大文件（决策数据不落盘，但本机残留也别打进镜像）
+# 运行产物 / 大文件
 evidence/
 logs/
 tmp/
@@ -26,7 +23,9 @@ night_lamp/output/
 *.npy
 *.pdf
 
-# 部署脚手架自身
+# 测试与部署脚手架自身（不进镜像）
+tests/
+tools/
 Dockerfile
 docker-compose.yml
 .dockerignore

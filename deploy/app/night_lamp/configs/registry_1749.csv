@@ -1,0 +1,35 @@
+kind,id,x,y,w,h,origin,status,updated_at,note
+lamp,M01,102.6,593.3,46.4,58.3,manual:night_longexp_short.json#idx00,active,2026-09-10,box 46.4x58.3; gap_next 341.7px
+lamp,M02,444.3,544.8,44.1,51.7,manual:night_longexp_short.json#idx01,active,2026-09-10,box 44.1x51.7; gap_prev 341.7px; gap_next 271.7px
+lamp,M03,716.0,503.5,43.6,46.0,manual:night_longexp_short.json#idx02,active,2026-09-10,box 43.6x46.0; gap_prev 271.7px; gap_next 184.6px
+lamp,M04,900.6,475.4,36.6,35.5,manual:night_longexp_short.json#idx03,active,2026-09-10,box 36.6x35.5; gap_prev 184.6px; gap_next 328.9px
+lamp,M05,1229.5,424.5,21.8,23.6,manual:night_longexp_short.json#idx04,active,2026-09-10,box 21.8x23.6; gap_prev 328.9px; gap_next 37.8px
+lamp,M06,1267.3,421.8,16.4,16.5,manual:night_longexp_short.json#idx05,active,2026-09-10,box 16.4x16.5; gap_prev 37.8px; gap_next 38.9px
+lamp,M07,1306.2,412.9,17.7,20.5,manual:night_longexp_short.json#idx06,voided,2026-09-10,box 17.7x20.5; gap_prev 38.9px; gap_next 76.2px; REVIEW far-gap 76px>50; voided 2026-09-10: daytime-1749_20260910_100123_01-no-fixture-night-box-was-person
+lamp,M08,1382.4,428.3,12.2,15.6,manual:night_longexp_short.json#idx08,active,2026-09-10,box 12.2x15.6; gap_prev 76.2px; gap_next 43.4px; REVIEW far-gap 76px>50
+lamp,M09,1425.8,428.7,15.1,17.2,manual:night_longexp_short.json#idx07,active,2026-09-10,box 15.1x17.2; gap_prev 43.4px; gap_next 23.6px
+lamp,M10,1449.4,425.6,11.6,13.4,manual:night_longexp_short.json#idx09,active,2026-09-10,box 11.6x13.4; gap_prev 23.6px; gap_next 26.8px
+lamp,M11,1476.2,423.7,11.6,13.0,manual:night_longexp_short.json#idx10,active,2026-09-10,box 11.6x13.0; gap_prev 26.8px; gap_next 18.6px
+lamp,M12,1494.8,421.4,9.8,11.3,manual:night_longexp_short.json#idx11,active,2026-09-10,box 9.8x11.3; gap_prev 18.6px; gap_next 15.2px
+lamp,M13,1510.1,418.4,9.7,12.3,manual:night_longexp_short.json#idx12,active,2026-09-10,box 9.7x12.3; gap_prev 15.2px; gap_next 10.2px
+lamp,M14,1520.2,413.4,7.9,9.9,manual:night_longexp_short.json#idx13,active,2026-09-10,box 7.9x9.9; gap_prev 10.2px; gap_next 7.5px
+lamp,M15,1527.8,410.1,6.6,8.9,manual:night_longexp_short.json#idx14,active,2026-09-10,box 6.6x8.9; gap_prev 7.5px; gap_next 8.2px
+lamp,M16,1536.0,407.9,8.1,8.8,manual:night_longexp_short.json#idx15,active,2026-09-10,box 8.1x8.8; gap_prev 8.2px; gap_next 9.1px
+lamp,M17,1545.2,405.2,7.2,8.6,manual:night_longexp_short.json#idx16,active,2026-09-10,box 7.2x8.6; gap_prev 9.1px; gap_next 10.1px
+lamp,M18,1555.3,403.1,5.4,6.2,manual:night_longexp_short.json#idx17,active,2026-09-10,box 5.4x6.2; gap_prev 10.1px; gap_next 3.1px
+lamp,M19,1558.4,401.2,4.3,6.3,manual:night_longexp_short.json#idx18,active,2026-09-10,box 4.3x6.3; gap_prev 3.1px; gap_next 3.9px
+lamp,M20,1562.3,399.9,5.2,6.9,manual:night_longexp_short.json#idx19,active,2026-09-10,box 5.2x6.9; gap_prev 3.9px; gap_next 8.4px
+lamp,M21,1570.7,399.1,6.2,7.8,manual:night_longexp_short.json#idx20,active,2026-09-10,box 6.2x7.8; gap_prev 8.4px; gap_next 23.3px
+lamp,M22,1594.0,394.0,7.9,7.6,manual:night_longexp_short.json#idx21,active,2026-09-10,box 7.9x7.6; gap_prev 23.3px; gap_next 16.7px
+lamp,M23,1610.7,382.6,6.8,8.5,manual:night_longexp_short.json#idx22,active,2026-09-10,box 6.8x8.5; gap_prev 16.7px; gap_next 12.5px
+lamp,M24,1623.2,383.1,6.3,7.9,manual:night_longexp_short.json#idx23,active,2026-09-10,box 6.3x7.9; gap_prev 12.5px; gap_next 9.9px
+lamp,M25,1633.0,382.6,5.9,6.9,manual:night_longexp_short.json#idx24,active,2026-09-10,box 5.9x6.9; gap_prev 9.9px; gap_next 8.7px
+lamp,M26,1641.8,382.8,5.3,7.3,manual:night_longexp_short.json#idx25,active,2026-09-10,box 5.3x7.3; gap_prev 8.7px; gap_next 16.5px
+lamp,M27,1658.2,383.9,8.6,9.1,manual:night_longexp_short.json#idx26,active,2026-09-10,box 8.6x9.1; gap_prev 16.5px; gap_next 14.3px
+lamp,M28,1672.5,381.9,6.6,7.1,manual:night_longexp_short.json#idx27,active,2026-09-10,box 6.6x7.1; gap_prev 14.3px; gap_next 13.2px
+lamp,M29,1685.8,382.2,5.9,7.7,manual:night_longexp_short.json#idx28,active,2026-09-10,box 5.9x7.7; gap_prev 13.2px
+watchlist,W1612,1612.0,632.0,,,legacy:registry_1749.csv#W1612,active,2026-09-10,right-band reflector; needs field review
+watchlist,W1643,1643.0,759.0,,,legacy:registry_1749.csv#W1643,active,2026-09-10,right-band reflector; needs field review
+watchlist,W1641,1641.0,818.0,,,legacy:registry_1749.csv#W1641,active,2026-09-10,right-band reflector; needs field review
+watchlist,W1543,1543.0,373.0,,,legacy:registry_1749.csv#W1543,active,2026-09-10,2nd row or net reflection; needs field review
+watchlist,W839,839.8,498.7,,,legacy:registry_1749.csv#W839,active,2026-09-10,known_fp_region safety-hat

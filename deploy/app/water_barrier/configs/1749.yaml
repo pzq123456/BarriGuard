@@ -1,0 +1,32 @@
+# water_gap 标定: 1749 机位（只留近行；远行不管，见 experiment_r4 结论）。
+# 本目录归算法包所有：ROI + 算法参数都在这里调，server/config.yaml 只引用路径。
+# 调完重启 server 生效。每个值的来源见行尾注释（报告缩写见 docs/）。
+# R2 = shadow_white 实验；R4 = soak/烧屏；R5 = hold 拦截对照。
+rows:
+  # poly 内联自 data/test/night_12000.json（归一化，2026-09-10 导出）。
+  - id: row_0_left_near
+    poly: [[0.0, 0.516938], [0.689914, 0.365628], [0.689914, 0.461608], [0.001397, 0.846658]]
+    U: 28.5            # 旧冻结值（日间帧标定）
+  - id: row_2_right_near
+    poly: [[0.576219, 0.992322], [0.891895, 0.401762], [0.905869, 0.506775], [0.841082, 0.99458]]
+    U: 6.0             # 旧冻结值
+
+road_rois: [[700, 700, 1000, 860], [1040, 560, 1240, 660], [600, 850, 900, 900]]  # 旧标定
+
+# 检测参数（8 个全显式写出；floor 0.24 系 R4 实测：栅栏门白铁门信号只跌到~0.3，
+# 0.24 下缺口连跑 51 站、整行仅此一处≥30 站；只验了日间，夜间未知）。
+detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+         floor_max: 0.24, core_exit: 0.06, min_width: 40, core_min_width: 30}
+
+track:
+  decay_rate: 0.5       # 旧标定
+  alarm_hold_s: 10.0    # 旧标定（60/300 为可选项，需运营确认延迟，见 R4/R5）
+  reconfirm_s: 5.0      # 旧标定
+  rer_threshold: 0.25   # 旧标定（tmp/server 实测：非路≤0.10 vs 真缺口 0.27~0.65）
+  track_stale_s: 8.0    # 旧标定
+  match_iou: 0.25       # 旧标定
+  match_center_ratio: 0.5  # 旧标定
+  median_window: 5      # 旧标定（中值帧抗瞬时遮挡）
+  intact_reset_s: 5.0   # 旧标定
+  rer_purity: 0.70      # 旧标定
+  patch_size: 8          # 旧标定

@@ -1,17 +1,44 @@
 # =============================================================================
-# BarriGuard 运行期配置（部署覆盖用，挂载到容器 /app/server/config.yaml）
+# BarriGuard 生产运行时配置（Wave 0 冻结 schema）
 # =============================================================================
-# 与 server/config.yaml 同构，仅把 host 改成 0.0.0.0：容器里监听必须绑到
-# 所有网卡，否则 127.0.0.1 无法被宿主端口映射访问。
-# 标定路径相对镜像内仓库根 (/app) 解析，故写法与仓库内一致。
+# 唯一事实源：显式声明“哪些相机跑哪些算法、用什么标定、何时跑、多久出一次结果、
+# 如何上报”。缺键/未知键应启动失败（校验由 Wave 1 config loader 实现），
+# 不得回落到代码默认值或静默跳过。
+#
+# 三层边界：
+#   本文件 / runtime + schedule + callback + cameras  -> “跑什么/何时跑/输出给谁”
+#   算法业务策略（rollowing confidence/min_interval/hold/reconfirm） -> 本文件
+#   算法标定（CV 参数 / ROI / 灯表） -> 各算法包 calibration 文件（只给路径）
+#
+# 红线（写入所有实施任务书）：
+#   ① series_cap=600 只是 benchmark，不是 production 默认（此处为 null=全序列）
+#   ② online candidate discovery 与 golden 必须独立量化，不得用 golden 候选集证明等价
+#   ③ Report 对旧 Algorithm.step 必须 additive（旧算法无需修改）
+#   ④ NightSession 严格按夜隔离；finalize/callback 失败不得污染下一夜
 # =============================================================================
+version: 1
 
-server:
-  host: "0.0.0.0"        # 容器内必须 0.0.0.0（本仓库默认 127.0.0.1）
+runtime:
+  host: "0.0.0.0"                 # 容器内必须 0.0.0.0
   port: 8000
   jpeg_quality: 80
-  preview_interval_s: 0.1
-  evidence_resave_s: 300.0
+  log_level: "warning"
+  memory_budget_mb_per_camera: 500
+
+schedule:
+  timezone: "Asia/Shanghai"
+  day_start: "07:00"
+  day_end: "17:00"
+  night_start: "20:00"
+  night_end: "03:00"              # 可跨零点
+  report_at: "07:00"              # 夜灯热力图 finalize/推送
+
+callback:
+  enabled: true
+  url: "http://host.docker.internal:9999/alert"
+  timeout_s: 8
+  queue_size: 64                  # 必须有界
+  image_field: "image_base64"
 
 cameras:
   - id: "1749"
@@ -21,16 +48,53 @@ cameras:
     algorithms:
       water_gap:
         enabled: true
+        schedule: day
         calibration: "water_barrier/configs/1749.yaml"
+        status: ready
+        report_interval_s: 3600     # 每小时一张缺口图（报告节奏）
+        alarm_min_interval_s: 3600  # 最小告警间隔（与 report 独立）
+        confidence: 0.25            # RER 门
+        alarm_hold_s: 10.0
+        reconfirm_s: 5.0
+
       night_lamp:
         enabled: true
+        schedule: night
         calibration: "night_lamp/configs/config_1749.yaml"
+        status: ready
+        night_gate: {enter_threshold: 100.0, exit_threshold: 120.0, persistence: 2}
+        sampling: {interval_ms: 160}          # Phase 1 起点，非最终真理
+        memory: {max_candidates: 200, series_cap: null}   # null=全序列；600 仅 benchmark
+        baseline: {frames: 60, warmup_s: 600}
+        periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
+                      peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
+        alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}
 
   - id: "1750"
     name: "Mobile Camera 1750"
     rtsp_url: "rtsp://118.140.234.166:8554/dahua1002491"
-    enabled: true        # 视频流 + 水马检测（参数 copy 1749，待重标）
+    enabled: true
     algorithms:
       water_gap:
         enabled: true
+        schedule: day
         calibration: "water_barrier/configs/1750.yaml"
+        status: calibration_pending   # 沿用但待重标；pending 只打印，不禁用
+        report_interval_s: 3600
+        alarm_min_interval_s: 3600
+        confidence: 0.50              # 1750 标定更严
+        alarm_hold_s: 10.0
+        reconfirm_s: 5.0
+
+      night_lamp:
+        enabled: true                 # 明确启用，不得因 pending 静默关闭
+        schedule: night
+        calibration: "night_lamp/configs/config_1750.yaml"
+        status: calibration_pending   # 8 盏 active，参数待重标
+        night_gate: {enter_threshold: 140.0, exit_threshold: 150.0, persistence: 2}
+        sampling: {interval_ms: 160}
+        memory: {max_candidates: 200, series_cap: null}
+        baseline: {frames: 60, warmup_s: 600}
+        periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
+                      peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
+        alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}

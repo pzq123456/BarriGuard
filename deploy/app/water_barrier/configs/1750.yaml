@@ -1,0 +1,34 @@
+# water_gap 标定: 1750 机位（只留近行；远行不管。初值多为 copy 1749，待实测重标）。
+# 本目录归算法包所有：ROI + 算法参数都在这里调，server/config.yaml 只引用路径。
+# 调完重启 server 生效。报告缩写见 docs/：R2 = shadow_white；R4 = soak/烧屏。
+rows:
+  # poly 来自 data/1750/clean_01.json 4 个 barrier（归一化，文件顺序；远行已删）。
+  - id: row_0_left_near
+    poly: [[0.002083, 0.285185], [0.342361, 0.11358], [0.412214, 0.108274], [0.415155, 0.148596], [0.34081, 0.181825], [0.295447, 0.219534], [0.00135, 0.446845]]
+    U: 28.5            # copy 1749（按角色映射，待重标）
+  - id: row_3_right_near
+    poly: [[0.593434, 0.10126], [0.654111, 0.107183], [0.716716, 0.138982], [0.918176, 0.203435], [0.911383, 0.29737], [0.734147, 0.222547], [0.715872, 0.197368], [0.713645, 0.185124], [0.698641, 0.177766], [0.65346, 0.138126]]
+    U: 6.0             # copy 1749（待重标）
+
+# R4 实测：只取晴天沥青。阴影水马与路面同为中性灰，宽 profile 会把影子判成路。
+# 注意：晴天沥青本身读白（white 0.6~0.86），真缺口露路在日光下形不成 dip——
+# 本机位日光时段真缺口灵敏度接近零，不是阈值问题（R2 问题 3）。
+road_rois: [[750, 450, 1000, 600]]
+
+# 检测参数（8 个全显式写出，均为代码默认值；待实测重标）。
+detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+         floor_max: 0.18, core_exit: 0.06, min_width: 40, core_min_width: 30}
+
+track:
+  decay_rate: 0.5       # copy 1749
+  alarm_hold_s: 10.0    # copy 1749（R5：货车 30s 停留 hold=10 漏报/hold=60 拦住）
+  reconfirm_s: 5.0      # copy 1749
+  # R4 实测：九图阴影 FP rer 全 ≤0.40，取 0.50（裕量 0.10，薄；光照变就回来）。
+  rer_threshold: 0.5
+  track_stale_s: 8.0    # copy 1749
+  match_iou: 0.25       # copy 1749
+  match_center_ratio: 0.5  # copy 1749
+  median_window: 5      # copy 1749
+  intact_reset_s: 5.0   # copy 1749
+  rer_purity: 0.70      # copy 1749
+  patch_size: 8         # copy 1749

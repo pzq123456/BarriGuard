@@ -1,0 +1,71 @@
+# config_1749.yaml -- camera 1749 production config (single source of truth).
+# One camera = one YAML + one registry CSV. Second camera = copy both files.
+# Paths are relative to this file's directory (night_lamp/configs/).
+# No absolute paths allowed here.
+
+camera:
+  id: "1749"
+  rtsp: "rtsp://118.140.234.166:8554/dahua1002490"  # mirror server/config.yaml 1749
+  video: "../../tmp/1749_202609040100.mp4"  # file source only (replay / dry)
+  width: 1920   # informational (actual geometry read from frames)
+  height: 1080  # informational
+  fps: 12.49    # informational (actual fps read from source)
+
+burst:
+  frames: 40       # frozen: 3.2s burst per README iron law
+  count: 10        # file-source spread count (live: bursts run until stopped)
+  interval_sec: 3600  # live cadence: 1 burst/hour
+
+source:
+  default: file    # file | rtsp (CLI --source overrides)
+
+# Cold-start annotation lives in registry_1749.csv (Excel-editable).
+# Freeze attestation stays here; loader enforces frozen/active-count/rows.
+# v2 schema: kind,id,x,y,w,h,origin,status,updated_at,note (see tools/build_registry.py).
+# id M01..M29 sorted by x, origin manual:<file>#idxNN, status active|voided (tombstone, never delete).
+registry:
+  file: registry_1749.csv
+  version: v20260911-rev28-voidM07
+  source: night_longexp_short.json 29 boxes 1:1; M07 voided 2026-09-11 daytime no fixture (night box was person), 28 active
+  frozen: true
+  count: 28
+  controls:
+    positive: ["M06"]
+    steady_check: ["M02"]
+
+# Frozen overnight detector (frozen-20260908). DO NOT TUNE without new evidence.
+detector:
+  version: "frozen-20260908: ON=7x7max>=med+40|7x7mean>=med+30; A=n_on>=1; B=AC(lag5-12)>=0.35&duty[0.05,0.85]; C=B&n_on>=2&AC>=0.50(obs)"
+  roi_r: 10
+  on_max_delta: 40   # 7x7 dilate max >= roi median + 40
+  on_mean_delta: 30  # 7x7 blur mean >= roi median + 30
+  lag_lo: 5
+  lag_hi: 12
+  ac_th: 0.35
+  duty_lo: 0.05
+  duty_hi: 0.85
+  c_ac: 0.50         # profile C (observational subset only)
+  c_min_on: 2
+
+# Additive models (adaptive.py) -- PROVISIONAL 2026-09-11, camera-1749 basis only.
+# Record-only, never alerts. Frozen detector block above is untouched.
+extra_models:
+  f2_swing_floor: 20.0  # M07-OLD dead swing 8.4 gated; alive flashers >=40
+  dead_bright_cap: 120.0  # thinnest number: M07-OLD cmax 106 vs M26-alive 134
+  steady_swing_lo: 25.0 # M01/M03/M04 flat vs flashers swing>100
+  steady_roi_hi: 140.0  # near steady roi_med 150-200 vs far dark cells
+
+# P1 night qualification -- PROVISIONAL, derived from single night (9 bursts).
+# 100/120/p=2 is a production starting point, not a validated universal threshold.
+# Recalibrate with production data. Hysteresis required: enter < exit.
+night:
+  version: "p1-provisional-20260908"
+  enter_threshold: 100.0
+  exit_threshold: 120.0
+  persistence: 2
+  initial: TWILIGHT
+  require_night_for_detection: true  # non-NIGHT bursts skip detector (gated, recorded)
+
+evidence:
+  out: "../output/production_1749"  # relative to configs/ (= night_lamp/output/...)
+  snapshot_quality: 70  # JPEG quality, evidence only, never feeds detector

@@ -1,0 +1,76 @@
+# config_1750.yaml -- camera 1750 production config (single source of truth).
+# One camera = one YAML + one registry CSV. Copied from config_1749.yaml as init.
+# Paths are relative to this file's directory (night_lamp/configs/).
+# No absolute paths allowed here.
+
+camera:
+  id: "1750"
+  rtsp: "rtsp://118.140.234.166:8554/dahua1002491"  # mirror server/config.yaml 1750 (offline)
+  video: "../../tmp/1750_20260913_220000.mp4"  # file source only (replay / dry)
+  width: 1920   # informational (actual geometry read from frames)
+  height: 1080  # informational
+  fps: 12.49    # informational (measured 12.49 on 20260911-0100 + 20260913-2200)
+
+burst:
+  frames: 40       # init copy of 1749 frozen burst; re-estimate T/d per camera before production
+  count: 10        # file-source spread count (live: bursts run until stopped)
+  interval_sec: 3600  # live cadence: 1 burst/hour
+
+source:
+  default: file    # file | rtsp (CLI --source overrides)
+
+# Cold-start annotation lives in registry_1750.csv (Excel-editable).
+# v2 schema: kind,id,x,y,w,h,origin,status,updated_at,note (see tools/build_registry.py).
+# Init: clean_01.json 11 light boxes 1:1 (M01-M11 by x). M05/M06 11.9px apart =
+# one fixture double-boxed (day image 2026-09-14, keep M06); M09 voided + M11
+# voided 2026-09-14 (daytime no fixture, 35min night zero-flash); unregistered
+# lamp ~34px E of M09 TBD.
+registry:
+  file: registry_1750.csv
+  version: v20260914-rev11-voidM05M09M11
+  source: clean_01.json 11 boxes 1:1 (M01-M11 by x); M05+M09+M11 voided 2026-09-14, 8 active
+  frozen: true
+  count: 8
+  controls:
+    positive: ["M04"]
+    steady_check: []
+
+# Detector params: frozen-20260908 math, first checked on 1750 night 2026-09-14
+# (2 nights: M04/M05/M10 B=1 stable; M02/M03/M06/M08 need F2; M09/M11 voided).
+# ON thresholds unchanged; full T/d re-estimation still TBD with more nights.
+detector:
+  version: "frozen-20260908-init-copy-for-1750: ON=7x7max>=med+40|7x7mean>=med+30; A=n_on>=1; B=AC(lag5-12)>=0.35&duty[0.05,0.85]; C=B&n_on>=2&AC>=0.50(obs)"
+  roi_r: 10
+  on_max_delta: 40   # 7x7 dilate max >= roi median + 40
+  on_mean_delta: 30  # 7x7 blur mean >= roi median + 30
+  lag_lo: 5
+  lag_hi: 12
+  ac_th: 0.35
+  duty_lo: 0.05
+  duty_hi: 0.85
+  c_ac: 0.50         # profile C (observational subset only)
+  c_min_on: 2
+
+# Additive models init copy of 1749 provisional values. RE-ESTIMATE on 1750
+# night video before any use; record-only, never alerts.
+extra_models:
+  f2_swing_floor: 20.0
+  dead_bright_cap: 120.0
+  steady_swing_lo: 25.0
+  steady_roi_hi: 140.0
+
+# Night qualification -- PROVISIONAL 2026-09-14, 1750 basis only:
+# 2 nights G 121-125 (09-11 0100 + 09-13 2200), 9 day stills G 158-162.
+# 140/150 is a production starting point; confirm with a full day of video.
+# Hysteresis required: enter < exit.
+night:
+  version: "p1-provisional-1750-20260914"
+  enter_threshold: 140.0
+  exit_threshold: 150.0
+  persistence: 2
+  initial: TWILIGHT
+  require_night_for_detection: true  # non-NIGHT bursts skip detector (gated, recorded)
+
+evidence:
+  out: "../output/production_1750"  # relative to configs/ (= night_lamp/output/...)
+  snapshot_quality: 70  # JPEG quality, evidence only, never feeds detector
