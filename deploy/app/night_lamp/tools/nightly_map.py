@@ -201,6 +201,25 @@ def split_comps(duty):
     return dyn, lab, stats, cand
 
 
+def label_slices(lab):
+    """Single-pass ``{label: (ys, xs)}`` for every label present in ``lab``.
+
+    Each pair is in the same row-major order as ``np.nonzero(lab == label)``,
+    so callers that used a per-label full-frame scan get identical arrays at
+    ``O(HW + nnz log nnz)`` total instead of ``O(n_labels * HW)``.
+    """
+    ys_all, xs_all = np.nonzero(lab)
+    if ys_all.size == 0:
+        return {}
+    vals = lab[ys_all, xs_all]
+    order = np.argsort(vals, kind="stable")
+    ys_s, xs_s, vals_s = ys_all[order], xs_all[order], vals[order]
+    uniq, starts, counts = np.unique(vals_s, return_index=True,
+                                     return_counts=True)
+    return {int(u): (ys_s[s:s + n], xs_s[s:s + n])
+            for u, s, n in zip(uniq, starts, counts)}
+
+
 def host_of(swing, y, x, r_out, r_in):
     """Brightest swing pixel in annulus (r_in, r_out]; None if flat."""
     h, w = swing.shape
@@ -253,9 +272,12 @@ def dim_map(duty, swing, base, dyn, lab, cand, series, r,
     dim = np.ones_like(duty, np.float32)
     dim[dyn] = dim_dyn
     rel = swing / np.maximum(base, NOISE_FLOOR)
+    groups = label_slices(lab)
     n_ref = 0
     for t, c in enumerate(cand):
-        ys, xs = np.nonzero(lab == c)
+        ys, xs = groups.get(int(c), (None, None))
+        if ys is None or ys.size == 0:
+            continue
         j = int(np.argmax(swing[ys, xs]))
         oy, ox = int(ys[j]), int(xs[j])
         host = host_of(swing, oy, ox, r, SELF_R)
@@ -266,7 +288,7 @@ def dim_map(duty, swing, base, dyn, lab, cand, series, r,
             continue
         if (pearson(series[t], series[len(cand) + t]) >= XCORR_TH
                 and rel[oy, ox] / rel[hy, hx] <= SWING_RATIO):
-            dim[lab == c] = dim_ref
+            dim[ys, xs] = dim_ref
             n_ref += 1
     return dim, n_ref, rel
 
@@ -417,9 +439,12 @@ def dyn_samples(duty, dyn, cap=DYN_MAX_PEAK):
     mx = cv.dilate(d, np.ones((DYN_PEAK_WIN, DYN_PEAK_WIN), np.float32))
     peaks = (d >= mx) & (d >= DYN_PEAK_FLOOR) & dyn
     num, lab = cv.connectedComponents(peaks.astype(np.uint8), 8)
+    groups = label_slices(lab)
     pts = []
     for c in range(1, num):
-        ys, xs = np.nonzero(lab == c)
+        ys, xs = groups.get(c, (None, None))
+        if ys is None or ys.size == 0:
+            continue
         j = int(np.argmax(d[ys, xs]))
         pts.append((int(ys[j]), int(xs[j]), float(d[ys[j], xs[j]])))
     pts.sort(key=lambda p: -p[2])   # strongest cores first when capped

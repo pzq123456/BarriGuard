@@ -312,9 +312,10 @@ class CandidateDiscovery:
         dyn, lab, stats, cand = nm.split_comps(duty)
         cand = sorted(cand, key=lambda c: -stats[c, cv.CC_STAT_AREA])
         self.n_components_seen += len(cand)
+        groups = nm.label_slices(lab)
         for c in cand:
-            ys, xs = np.nonzero(lab == c)
-            if ys.size == 0:
+            ys, xs = groups.get(int(c), (None, None))
+            if ys is None or ys.size == 0:
                 continue
             jd = int(np.argmax(duty[ys, xs]))
             y, x = int(ys[jd]), int(xs[jd])
@@ -379,6 +380,8 @@ class NightSession:
         self._bg = None
         self._on = None
         self._peak = None
+        self._excess = None
+        self._on_hit = None
 
         self._meds = []
         self._n_seen = 0
@@ -474,9 +477,18 @@ class NightSession:
 
     def _process(self, gray, med):
         off = int(round(med - self._detrend))
-        excess = nm.prep(gray, self._mask, off) - self._base
-        self._on += (excess >= nm.ON_DELTA)
-        np.maximum(self._peak, excess, out=self._peak)
+        if self._excess is None:
+            self._excess = np.empty(gray.shape, np.float32)
+        ex = self._excess
+        ex[:] = gray
+        ex[self._mask] = 0.0
+        ex -= off
+        ex -= self._base
+        if self._on_hit is None:
+            self._on_hit = np.empty(gray.shape, bool)
+        np.greater_equal(ex, nm.ON_DELTA, out=self._on_hit)
+        np.add(self._on, self._on_hit, out=self._on)
+        np.maximum(self._peak, ex, out=self._peak)
         self._series.append(gray, self._mask, off)
 
     def _run_discovery(self):
@@ -645,9 +657,11 @@ class NightSession:
         cand = cand_all[:self._max_candidates]
         n_cand_dropped_final = max(0, n_cand_total - len(cand))
 
+        groups = nm.label_slices(lab)
+        cand_px = [groups.get(int(c), (np.zeros(0, np.intp), np.zeros(0, np.intp)))
+                   for c in cand]
         pts, hosts, fpts = [], [], []
-        for c in cand:
-            ys, xs = np.nonzero(lab == c)
+        for ys, xs in cand_px:
             j = int(np.argmax(swing[ys, xs]))
             oy, ox = int(ys[j]), int(xs[j])
             host = nm.host_of(swing, oy, ox, nm.NEIGH_R, nm.SELF_R)
@@ -689,7 +703,8 @@ class NightSession:
         n_flash = 0
         for i, c in enumerate(cand):
             if flashing(i, *fpts[i]):
-                flash[lab == c] = 1
+                ys, xs = cand_px[i]
+                flash[ys, xs] = 1
                 r = max(stats[c, cv.CC_STAT_WIDTH],
                         stats[c, cv.CC_STAT_HEIGHT]) // 2 + nm.RING_PAD
                 rings.append((fpts[i][1], fpts[i][0], r))
@@ -796,6 +811,8 @@ class NightSession:
         self._bg = None
         self._on = None
         self._peak = None
+        self._excess = None
+        self._on_hit = None
         self._mask = None
         self._meds = None
         if self._series is not None:
