@@ -30,7 +30,7 @@ for _p in (str(APP), str(TESTS), str(TOOLS)):
 import probe_config as probe  # noqa: E402
 
 
-def phase_a_config(prod_cfg_path: Path, mini_cfg_path: Path):
+def phase_a_config(prod_cfg_path: Path):
     print("\n=== Phase A: config discovery / load ===")
     from server import config
 
@@ -41,12 +41,8 @@ def phase_a_config(prod_cfg_path: Path, mini_cfg_path: Path):
     probe.wrap_config_dicts(cfg)
     print(f"[A] load_runtime({prod_cfg_path.name}) -> {len(cfg.cameras)} cameras")
 
-    mini = config.load_runtime(mini_cfg_path)
-    probe.wrap_config_dicts(mini)
-    print(f"[A] load_runtime({mini_cfg_path.name}) -> {len(mini.cameras)} cameras")
-
     removed = not hasattr(config, "load")
-    for label in ("legacy load(None)", "legacy load(prod)", "legacy load(mini)"):
+    for label in ("legacy load(None)", "legacy load(prod)"):
         outcome = "removed (config.load deleted)" if removed else "present"
         probe.record_path("server.config.load", label, None, [], outcome)
         print(f"[A] {label} -> {outcome}")
@@ -113,10 +109,9 @@ def main():
 
     video = Path(args.video)
     prod_cfg = DEPLOY / "config.yaml"
-    mini_cfg = DEPLOY / "config.mini.yaml"
 
     probe.install()
-    cfg = phase_a_config(prod_cfg, mini_cfg)
+    cfg = phase_a_config(prod_cfg)
 
     phase_b_consumers(cfg, video)
     phase_c_acceptance(video)
