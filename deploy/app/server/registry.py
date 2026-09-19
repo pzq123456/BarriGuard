@@ -6,7 +6,7 @@ deploy 世界移除）。夜灯的标定校验改由 ``night_lamp.calibration.lo
 构造，不在此注册 builder。water_barrier 保持原样。
 
 server 不散 import 各算法包。标定内容校验归各算法包的 load_calibration，
-server 只负责文件路径解析 (见 config._resolve)。
+server 只负责文件路径解析 (见 config_validate._resolve_calibration)。
 """
 from night_lamp import calibration as night_calib
 from water_barrier import WaterGapAlgorithm, load_calibration
