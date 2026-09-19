@@ -41,8 +41,9 @@ def offscreen(cfg, img_path: str, repeat: int = 14, camera: str = None,
     if algo != "water_gap":
         raise RuntimeError("%s 是时序算法，offscreen 静态帧模式不适用" % algo)
     name = algo
+    from .worker import _load_calibration
     frame = cv.imread(img_path)
-    calib = registry.load_calib(name, binding.spec.calibration)
+    calib = _load_calibration(name, binding.spec)
     algo = registry.create(name, frame.shape, calib, cam.id)
     os.makedirs(outdir, exist_ok=True)
     for i in range(repeat):

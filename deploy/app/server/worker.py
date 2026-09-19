@@ -11,6 +11,7 @@ Runtime     ：唯一持有 Scheduler 的编排者，用后台线程 poll() 并�
   * 依赖模块按冻结签名 import（懒加载，便于在依赖就绪前单测）；
     测试可通过 Runtime/CameraWorker 的 factory 注入替身。
 """
+import dataclasses
 import threading
 import time
 from collections import deque
@@ -55,34 +56,37 @@ def _default_store(cfg):
     return ReportStore(out)
 
 
-# 业务策略字段 -> 算法标定 track 键（仅当 spec 暴露该字段时 additive 覆盖）。
-_SPEC_POLICY = (("confidence", "rer_threshold"),
-                ("alarm_hold_s", "alarm_hold_s"),
-                ("reconfirm_s", "reconfirm_s"))
+# 业务策略字段 -> 算法 track 键（仅当 spec 暴露该字段时注入）。
+_WATER_POLICY = (("confidence", "rer_threshold"),
+                 ("alarm_hold_s", "alarm_hold_s"),
+                 ("reconfirm_s", "reconfirm_s"))
 
 
-def _apply_spec_policy(calib, spec):
-    """把 binding.spec 的业务策略合并进算法标定的 track 段（不改算法代码）。
+def _apply_water_params(calib, spec):
+    """把 WaterGapSpec 的 detect/track/策略合并进标定 dict（算法只读 calib）。
 
-    水马算法只从 calib["track"] 读 rer_threshold/alarm_hold_s/reconfirm_s；
-    WaterGapSpec.confidence 等字段在此注入。夜灯等无此字段的 spec 原样返回。
+    水马数据文件只剩 rows/road_rois；detect、track 与 rer_threshold/
+    alarm_hold_s/reconfirm_s 全由本函数从 spec 注入，保证单一来源。
+    spec 无这些字段时（如夜灯）原样返回。
     """
     if not isinstance(calib, dict):
         return calib
-    track = calib.get("track")
-    if not isinstance(track, dict):
-        return calib
-    merged = dict(track)
-    changed = False
-    for attr, key in _SPEC_POLICY:
+    out = dict(calib)
+
+    detect = getattr(spec, "detect", None)
+    if dataclasses.is_dataclass(detect):
+        out["detect"] = dataclasses.asdict(detect)
+
+    track = dict(out.get("track") or {})
+    track_spec = getattr(spec, "track", None)
+    if dataclasses.is_dataclass(track_spec):
+        track.update(dataclasses.asdict(track_spec))
+    for attr, key in _WATER_POLICY:
         val = getattr(spec, attr, None)
         if isinstance(val, (int, float)) and not isinstance(val, bool):
-            merged[key] = val
-            changed = True
-    if not changed:
-        return calib
-    out = dict(calib)
-    out["track"] = merged
+            track[key] = val
+    if track:
+        out["track"] = track
     return out
 
 
@@ -90,11 +94,11 @@ def _load_calibration(name, spec):
     """spec.calibration 是（绝对）路径；也可能是已加载内容（dict），两者都兼容。"""
     cal = getattr(spec, "calibration", "")
     if not isinstance(cal, str):
-        return _apply_spec_policy(cal, spec)
+        return _apply_water_params(cal, spec)
     from .config import ROOT
     from .config_validate import resolve_resource
     resolved = resolve_resource(cal, ROOT, f"algorithm.{name}.calibration")
-    return _apply_spec_policy(registry.load_calib(name, resolved), spec)
+    return _apply_water_params(registry.load_calib(name, resolved), spec)
 
 
 class CameraWorker:

@@ -19,7 +19,8 @@ from .algo import Report  # noqa: F401  (re-export, 供 Runtime/Reporter 使用)
 
 __all__ = [
     "Report", "ScheduleState", "CalibrationStatus", "AlignmentStatus",
-    "ScheduleSpec", "CallbackSpec", "WaterGapSpec", "SamplingSpec",
+    "ScheduleSpec", "CallbackSpec", "WaterGapSpec", "DetectSpec", "TrackSpec",
+    "SamplingSpec",
     "MemorySpec", "BaselineSpec", "PeriodicitySpec", "AlignmentSpec",
     "OvernightSpec", "NightLampSpec", "AlgorithmBinding", "CameraSpec",
     "RuntimeConfig",
@@ -68,6 +69,36 @@ class CallbackSpec:
 
 
 @dataclass
+class DetectSpec:
+    """水马单帧检测参数（原标定文件 detect 段，上移为运行期选项）。"""
+    trim: float = 0.04
+    conf_th: float = 0.30
+    support_th: float = 0.3
+    min_box_width: int = 30
+    floor_max: float = 0.24
+    core_exit: float = 0.06
+    min_width: int = 40
+    core_min_width: int = 30
+
+
+@dataclass
+class TrackSpec:
+    """水马时序跟踪参数（原标定文件 track 段非策略键，上移为运行期选项）。
+
+    rer_threshold/alarm_hold_s/reconfirm_s 不在此处：它们是 WaterGapSpec 的
+    策略字段（confidence/alarm_hold_s/reconfirm_s），注入时同名写入 track。
+    """
+    decay_rate: float = 0.5
+    track_stale_s: float = 8.0
+    match_iou: float = 0.25
+    match_center_ratio: float = 0.5
+    median_window: int = 5
+    intact_reset_s: float = 5.0
+    rer_purity: float = 0.70
+    patch_size: int = 8
+
+
+@dataclass
 class WaterGapSpec:
     """水马：算法逻辑不变，只配业务策略与出图节奏。"""
     calibration: str = ""
@@ -81,6 +112,9 @@ class WaterGapSpec:
     # 状态机（注入算法，算法内部不硬编码）
     alarm_hold_s: float = 10.0
     reconfirm_s: float = 5.0
+
+    detect: DetectSpec = field(default_factory=DetectSpec)
+    track: TrackSpec = field(default_factory=TrackSpec)
 
 
 @dataclass

@@ -54,9 +54,16 @@ cameras:
         status: ready                 # manifest-only
         report_interval_s: 3600     # 每小时一张缺口图（报告节奏）
         alarm_min_interval_s: 3600  # 最小告警间隔（与 report 独立）
-        confidence: 0.25            # RER 门
+        confidence: 0.25            # RER 门（非路≤0.10 vs 真缺口 0.27~0.65）
         alarm_hold_s: 10.0
         reconfirm_s: 5.0
+        # 检测/跟踪参数（原 water_barrier/configs/1749.yaml）
+        # floor_max 0.24：R4 实测栅栏门白铁门信号只跌到~0.3，0.24 下缺口连跑 51 站
+        detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+                 floor_max: 0.24, core_exit: 0.06, min_width: 40, core_min_width: 30}
+        track: {decay_rate: 0.5, track_stale_s: 8.0, match_iou: 0.25,
+                match_center_ratio: 0.5, median_window: 5, intact_reset_s: 5.0,
+                rer_purity: 0.70, patch_size: 8}
 
       night_lamp:
         enabled: true
@@ -83,9 +90,15 @@ cameras:
         status: calibration_pending   # 沿用但待重标；pending 只打印，不禁用（manifest-only）
         report_interval_s: 3600
         alarm_min_interval_s: 3600
-        confidence: 0.50              # 1750 标定更严
+        confidence: 0.50              # R4 九图阴影 FP rer≤0.40，取 0.50（裕量薄）
         alarm_hold_s: 10.0
         reconfirm_s: 5.0
+        # 检测/跟踪参数（原 water_barrier/configs/1750.yaml）
+        detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+                 floor_max: 0.18, core_exit: 0.06, min_width: 40, core_min_width: 30}
+        track: {decay_rate: 0.5, track_stale_s: 8.0, match_iou: 0.25,
+                match_center_ratio: 0.5, median_window: 5, intact_reset_s: 5.0,
+                rer_purity: 0.70, patch_size: 8}
 
       night_lamp:
         enabled: true                 # 明确启用，不得因 pending 静默关闭

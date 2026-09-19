@@ -24,6 +24,7 @@ from .contracts import (
     CalibrationStatus,
     CallbackSpec,
     CameraSpec,
+    DetectSpec,
     MemorySpec,
     NightLampSpec,
     OvernightSpec,
@@ -31,6 +32,7 @@ from .contracts import (
     RuntimeConfig,
     SamplingSpec,
     ScheduleSpec,
+    TrackSpec,
     WaterGapSpec,
 )
 
@@ -70,7 +72,7 @@ ALLOWED_SCHEDULES = {"day", "night"}
 
 # 算法名 -> 绑定 spec 的数据类（新增算法在此登记；不在代码里散落算法名判断）
 ALGO_SPECS = {"water_gap": WaterGapSpec, "night_lamp": NightLampSpec}
-# night_lamp 的嵌套 spec 键 -> 数据类
+# 算法 spec 的嵌套选项键 -> 数据类（water_gap 的 detect/track 也在内）
 NESTED_SPECS = {
     "sampling": SamplingSpec,
     "memory": MemorySpec,
@@ -78,6 +80,8 @@ NESTED_SPECS = {
     "periodicity": PeriodicitySpec,
     "alignment": AlignmentSpec,
     "overnight": OvernightSpec,
+    "detect": DetectSpec,
+    "track": TrackSpec,
 }
 # NightLampSpec.night_gate 是裸 dict（contracts 未定数据类），显式列出允许键
 NIGHT_GATE_KEYS = {"enter_threshold", "exit_threshold", "persistence"}

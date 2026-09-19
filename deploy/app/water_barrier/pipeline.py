@@ -7,8 +7,8 @@
 RER 的"水马前景"改用红/白颜色掩膜 (轴向采样不输出分割图)，
 语义不变: 缺口框内非水马像素中真实路面 patch 占比。
 
-标定文件结构见 water_barrier/configs/1749.yaml：rows（id/poly/U）、road_rois、
-track、detect（8 键全顶层）。只留近行；配置行即上报行。
+标定文件只留数据资产：rows（id/poly/U）+ road_rois（几何，只留近行；配置行即上报行）。
+运行期选项 detect/track 与策略已上移 deploy/config.yaml，由 server.worker 注入。
 
 对外只出三样东西 (见 server/algo.py):
   events  非 NORMAL 轨道 (alarm/suspected, 含 box/severity/rer/row_id)
@@ -26,12 +26,7 @@ from server.algo import AlgoResult, Annotation, Event
 from . import track as T
 from .signal import red_m, white_m
 
-# 时序确认参数（11 个，逐帧 RER 确认 + 状态机用，见 track.py）。
-TRACK_KEYS = ("decay_rate", "alarm_hold_s", "reconfirm_s", "rer_threshold",
-              "track_stale_s", "match_iou", "match_center_ratio",
-              "median_window", "intact_reset_s", "rer_purity", "patch_size")
-
-# 检测参数（8 个，全顶层：前 4 support 累计用，后 4 signal.detect 成核用）。
+# 检测参数（8 个，供 WaterGapAlgorithm 校验注入的 detect 段）。
 DETECT_KEYS = ("trim", "conf_th", "support_th", "min_box_width",
                "floor_max", "core_exit", "min_width", "core_min_width")
 
@@ -46,7 +41,11 @@ def _need(d, keys, ctx):
 
 
 def load_calibration(fp):
-    """读一份标定文件并校验（只留近行；配置行即上报行，无 report 开关）。"""
+    """读水马数据文件（rows/road_rois）。
+
+    运行期选项（detect/track/策略）已上移 deploy/config.yaml，由 server.worker
+    注入；此处若仍出现 detect/track 则报错，杜绝双源。
+    """
     fp = Path(fp)
     d = yaml.safe_load(fp.read_text(encoding="utf-8")) or {}
     rows = d.get("rows", [])
@@ -60,12 +59,11 @@ def load_calibration(fp):
             raise RuntimeError(f"行缺poly: {fp}.{r['id']}")
         if r.get("U") is None:
             raise RuntimeError(f"行缺U标定: {fp}.{r['id']}")
-    _need(d, ("road_rois", "track"), str(fp))
-    _need(d["track"], TRACK_KEYS, str(fp))
-    d.setdefault("detect", {})
-    for k in d["detect"]:
-        if k not in DETECT_KEYS:
-            raise ValueError(f"未知detect键: {fp}.detect.{k}")
+    _need(d, ("road_rois",), str(fp))
+    for moved in ("detect", "track"):
+        if moved in d:
+            raise ValueError(
+                f"水马标定不得含 {moved}（已上移 deploy/config.yaml）: {fp}")
     return d
 
 
