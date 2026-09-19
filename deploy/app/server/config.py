@@ -35,8 +35,8 @@ def _config_path():
 def load_runtime(path=None):
     """读 deploy/config.yaml -> contracts.RuntimeConfig（Wave 1 严格入口）。
 
-    与 legacy load() 并存、互不影响：未知键 / 缺必填 / enabled 但缺 calibration /
-    时间无法解析 / callback url 非法 -> 抛 ConfigError（启动失败），不回落默认值。
+    未知键 / 缺必填 / enabled 但缺 calibration / 时间无法解析 / callback url 非法
+    -> 抛 ConfigError（启动失败），不回落默认值。
     解析成功后按 相机->算法->schedule->calibration->status 打印清单；
     status=calibration_pending 照常加载并打印，不禁用。
 

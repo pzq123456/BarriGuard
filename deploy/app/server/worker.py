@@ -15,7 +15,6 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
-from pathlib import Path
 
 import cv2 as cv
 from loguru import logger
@@ -97,8 +96,8 @@ def _load_calibration(name, spec):
     if not isinstance(cal, str):
         return _apply_spec_policy(cal, spec)
     from .config import ROOT
-    p = Path(cal)
-    resolved = p if p.is_absolute() else ROOT / p
+    from .config_validate import resolve_calibration
+    resolved = resolve_calibration(cal, ROOT, f"algorithm.{name}.calibration")
     return _apply_spec_policy(registry.load_calib(name, resolved), spec)
 
 

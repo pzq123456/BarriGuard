@@ -36,7 +36,7 @@ from .contracts import (
 
 ROOT = Path(__file__).resolve().parent.parent
 
-__all__ = ["ConfigError", "parse_runtime", "format_manifest"]
+__all__ = ["ConfigError", "parse_runtime", "format_manifest", "resolve_calibration"]
 
 
 class ConfigError(RuntimeError):
@@ -168,7 +168,7 @@ def _coerce(ftype, v, where):
 
 
 # --- 各段解析 -----------------------------------------------------------------------
-def _resolve_calibration(raw, base_dir, where):
+def resolve_calibration(raw, base_dir, where):
     s = _as_str(raw, where)
     p = Path(s)
     if p.is_absolute():
@@ -298,7 +298,7 @@ def _parse_binding(name, b, where, base_dir):
         raise ConfigError(
             f"{where}.schedule 非法: {schedule!r}（只允许 day/night）"
         )
-    calibration = _resolve_calibration(b["calibration"], base_dir, f"{where}.calibration")
+    calibration = resolve_calibration(b["calibration"], base_dir, f"{where}.calibration")
     status = _parse_enum(
         CalibrationStatus, b.get("status", "ready"), f"{where}.status"
     )
