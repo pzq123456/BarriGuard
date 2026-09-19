@@ -76,8 +76,7 @@ def load_spec(cfg_path: Path, camera_id: str, args) -> NightLampSpec:
             min_peaks=int(p.get("min_peaks", 3)),
             gap_tol=int(p.get("gap_tol", 1)),
             onset_min=int(p.get("onset_min", 50))),
-        alignment=AlignmentSpec(method=a.get("method", "ecc_translation"),
-                                min_cc=float(a.get("min_cc", 0.5)),
+        alignment=AlignmentSpec(min_cc=float(a.get("min_cc", 0.5)),
                                 on_low_cc=AlignmentStatus(a.get("on_low_cc", "degraded"))),
     )
 

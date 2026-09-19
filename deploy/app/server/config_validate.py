@@ -303,7 +303,7 @@ def _parse_binding(name, b, where, base_dir):
         CalibrationStatus, b.get("status", "ready"), f"{where}.status"
     )
     spec = _build_spec(name, b, schedule, calibration, status, where)
-    return AlgorithmBinding(name=name, schedule=schedule, spec=spec)
+    return AlgorithmBinding(schedule=schedule, spec=spec)
 
 
 def _parse_cameras(raw, base_dir):

@@ -114,7 +114,6 @@ class PeriodicitySpec:
 
 @dataclass
 class AlignmentSpec:
-    method: str = "ecc_translation"
     min_cc: float = 0.5               # 低于此 -> degraded（或 rejected，按 on_low_cc）
     on_low_cc: AlignmentStatus = AlignmentStatus.DEGRADED
 
@@ -148,7 +147,6 @@ class NightLampSpec:
 
 @dataclass
 class AlgorithmBinding:
-    name: str                         # "water_gap" | "night_lamp"
     schedule: str                     # "day" | "night"
     spec: object                      # WaterGapSpec | NightLampSpec
 

@@ -69,7 +69,7 @@ cameras:
         baseline: {frames: 60, warmup_s: 600}
         periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
                       peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
-        alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}
+        alignment: {min_cc: 0.5, on_low_cc: degraded}
         overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}
 
   - id: "1750"
@@ -99,5 +99,5 @@ cameras:
         baseline: {frames: 60, warmup_s: 600}
         periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
                       peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
-        alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}
+        alignment: {min_cc: 0.5, on_low_cc: degraded}
         overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}

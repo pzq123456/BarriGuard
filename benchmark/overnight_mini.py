@@ -49,7 +49,7 @@ def build_spec(cadence_min: int, burst_s: int) -> NightLampSpec:
         periodicity=PeriodicitySpec(period_step=2, lag_lo_s=0.3, lag_hi_s=7.0,
                                     peak_floor=0.2, min_peaks=3, gap_tol=1,
                                     onset_min=50),
-        alignment=AlignmentSpec(method="ecc_translation", min_cc=0.5),
+        alignment=AlignmentSpec(min_cc=0.5),
         overnight=OvernightSpec(enabled=True, cadence_minutes=cadence_min,
                                 burst_seconds=burst_s),
     )

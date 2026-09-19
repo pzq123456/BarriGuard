@@ -288,9 +288,9 @@ def build_cfg(tz_name=DEFAULT_TZ):
         name=f"replay-{CAMERA_ID}",
         rtsp_url="file://replay.mp4",
         algorithms={
-            DAY_ALGO: AlgorithmBinding(name=DAY_ALGO, schedule="day",
+            DAY_ALGO: AlgorithmBinding(schedule="day",
                                        spec=WaterGapSpec(schedule="day")),
-            NIGHT_ALGO: AlgorithmBinding(name=NIGHT_ALGO, schedule="night",
+            NIGHT_ALGO: AlgorithmBinding(schedule="night",
                                          spec=NightLampSpec(schedule="night")),
         },
     )
@@ -310,7 +310,7 @@ def build_night_only_cfg(tz_name=DEFAULT_TZ):
         name=f"replay-{CAMERA_ID}",
         rtsp_url="file://replay.mp4",
         algorithms={
-            NIGHT_ALGO: AlgorithmBinding(name=NIGHT_ALGO, schedule="night",
+            NIGHT_ALGO: AlgorithmBinding(schedule="night",
                                          spec=NightLampSpec(schedule="night")),
         },
     )
