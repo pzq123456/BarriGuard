@@ -194,23 +194,23 @@ def patch_resolvers() -> None:
 
     config.load_runtime = load_runtime
 
-    original_resolve_calib = cv.resolve_calibration
+    original_resolve_calib = cv.resolve_resource
 
     def _resolve_calibration(raw, base_dir, where):
         p = Path(raw)
         candidates = [p] if p.is_absolute() else [cv.ROOT / p, Path(base_dir) / p]
         try:
             out = original_resolve_calib(raw, base_dir, where)
-            record_path("server.config_validate.resolve_calibration",
-                        "calibration", out, candidates, where)
+            record_path("server.config_validate.resolve_resource",
+                        "resource", out, candidates, where)
             return out
         except Exception as exc:
-            record_path("server.config_validate.resolve_calibration",
-                        "calibration", None, candidates,
+            record_path("server.config_validate.resolve_resource",
+                        "resource", None, candidates,
                         f"{where} -> {type(exc).__name__}: {exc}")
             raise
 
-    cv.resolve_calibration = _resolve_calibration
+    cv.resolve_resource = _resolve_calibration
 
     original_load_calib = registry.load_calib
 

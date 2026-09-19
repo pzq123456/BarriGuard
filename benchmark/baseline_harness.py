@@ -88,7 +88,6 @@ def load_spec(cfg_path: Path, camera_id: str, args) -> NightLampSpec:
 
     on_low = align.get("on_low_cc", "degraded")
     return NightLampSpec(
-        calibration=nl.get("calibration", ""),
         night_gate=nl.get("night_gate", {}) or {},
         sampling=SamplingSpec(interval_ms=interval),
         memory=MemorySpec(max_candidates=max_cand, series_cap=series_cap),

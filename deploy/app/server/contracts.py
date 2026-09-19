@@ -4,7 +4,7 @@
 边界原则：
   部署配置（deploy/config.yaml）  -> 本模块的数据类（跑什么/何时跑/输出给谁）
   业务策略（confidence/min_interval/hold/reconfirm）-> 本模块
-  算法标定（CV 参数/ROI/灯表）   -> 仍留在各算法包的 calibration 文件，只给路径
+  算法数据资产（水马 ROI/road 几何标定）-> 留在算法包，配置只给路径引用
 
 注意：
   - Report 定义在 server/algo.py（属于 Algorithm 产物契约），此处 import 复用。
@@ -132,7 +132,6 @@ class OvernightSpec:
 @dataclass
 class NightLampSpec:
     """夜灯：以 nightly_map 为目标算法，整夜在线累积，07:00 finalize。"""
-    calibration: str = ""
     schedule: str = "night"
     status: CalibrationStatus = CalibrationStatus.READY  # manifest-only, no runtime branch
 

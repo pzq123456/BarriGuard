@@ -67,7 +67,7 @@ def phase_b_consumers(cfg, video: Path):
     NightAdapter(session, night_spec, clock)
     print(f"[B] NightSession+NightAdapter built for camera {cam.id}")
 
-    # night: go through worker's factory (reads calibration registry/lamps).
+    # night: go through worker's factory (builds NightAdapter from spec).
     try:
         worker._default_night_adapter(cam.id, night_spec, clock)
         print("[B] worker._default_night_adapter OK (calibration consumed)")

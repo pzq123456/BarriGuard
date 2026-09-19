@@ -36,7 +36,7 @@ from .contracts import (
 
 ROOT = Path(__file__).resolve().parent.parent
 
-__all__ = ["ConfigError", "parse_runtime", "format_manifest", "resolve_calibration"]
+__all__ = ["ConfigError", "parse_runtime", "format_manifest", "resolve_resource"]
 
 
 class ConfigError(RuntimeError):
@@ -65,7 +65,7 @@ CALLBACK_REQUIRED = ("enabled", "url")
 CAMERA_KEYS = {"id", "name", "rtsp_url", "enabled", "algorithms"}
 CAMERA_REQUIRED = ("id", "rtsp_url")
 
-BINDING_KEYS = {"enabled", "schedule", "calibration", "status"}
+BINDING_KEYS = {"enabled", "schedule", "status"}
 ALLOWED_SCHEDULES = {"day", "night"}
 
 # 算法名 -> 绑定 spec 的数据类（新增算法在此登记；不在代码里散落算法名判断）
@@ -168,18 +168,18 @@ def _coerce(ftype, v, where):
 
 
 # --- 各段解析 -----------------------------------------------------------------------
-def resolve_calibration(raw, base_dir, where):
+def resolve_resource(raw, base_dir, where):
     s = _as_str(raw, where)
     p = Path(s)
     if p.is_absolute():
         if not p.is_file():
-            raise ConfigError(f"{where} 标定文件不存在: {p}")
+            raise ConfigError(f"{where} 资源文件不存在: {p}")
         return str(p)
     for parent in (ROOT, base_dir):
         c = parent / p
         if c.is_file():
             return str(c)
-    raise ConfigError(f"{where} 标定文件不存在: {s}（已相对仓库根与配置文件目录查找）")
+    raise ConfigError(f"{where} 资源文件不存在: {s}（已相对仓库根与配置文件目录查找）")
 
 
 def _parse_runtime(d, where):
@@ -249,6 +249,11 @@ def _parse_night_gate(d, where):
         out["exit_threshold"] = _as_float(d["exit_threshold"], f"{where}.exit_threshold")
     if "persistence" in d:
         out["persistence"] = _as_int(d["persistence"], f"{where}.persistence", minimum=1)
+    te, tx = out.get("enter_threshold"), out.get("exit_threshold")
+    if te is not None and tx is not None and not te < tx:
+        raise ConfigError(
+            f"{where} 需 enter_threshold < exit_threshold（迟滞），实际 {te} >= {tx}"
+        )
     return out
 
 
@@ -265,12 +270,23 @@ def _binding_allowed(name):
     return BINDING_KEYS | {f.name for f in _dc_fields(ALGO_SPECS[name])}
 
 
-def _build_spec(name, b, schedule, calibration, status, where):
+def _build_spec(name, b, schedule, status, where, base_dir):
     cls = ALGO_SPECS[name]
-    kwargs = {"calibration": calibration, "schedule": schedule, "status": status}
+    kwargs = {}
     for f in _dc_fields(cls):
         key = f.name
-        if key in ("calibration", "schedule", "status") or key not in b:
+        if key == "schedule":
+            kwargs[key] = schedule
+            continue
+        if key == "status":
+            kwargs[key] = status
+            continue
+        if key == "calibration":
+            if key in b:  # water_gap 的标定数据文件引用
+                kwargs[key] = resolve_resource(
+                    b[key], base_dir, f"{where}.calibration")
+            continue
+        if key not in b:
             continue
         kwhere = f"{where}.{key}"
         if key in NESTED_SPECS:
@@ -292,17 +308,19 @@ def _parse_binding(name, b, where, base_dir):
     enabled = _as_bool(b["enabled"], f"{where}.enabled")
     if not enabled:
         return None  # 显式禁用：跳过（status 不影响启用）
-    _require(b, ("schedule", "calibration"), where)
+    _require(b, ("schedule",), where)
     schedule = _as_str(b["schedule"], f"{where}.schedule")
     if schedule not in ALLOWED_SCHEDULES:
         raise ConfigError(
             f"{where}.schedule 非法: {schedule!r}（只允许 day/night）"
         )
-    calibration = resolve_calibration(b["calibration"], base_dir, f"{where}.calibration")
+    spec_fields = {f.name for f in _dc_fields(ALGO_SPECS[name])}
+    if "calibration" in spec_fields:
+        _require(b, ("calibration",), where)
     status = _parse_enum(
         CalibrationStatus, b.get("status", "ready"), f"{where}.status"
     )
-    spec = _build_spec(name, b, schedule, calibration, status, where)
+    spec = _build_spec(name, b, schedule, status, where, base_dir)
     return AlgorithmBinding(schedule=schedule, spec=spec)
 
 
@@ -374,8 +392,13 @@ def parse_runtime(data, base_dir, source="<config>"):
     return RuntimeConfig(**kwargs)
 
 
+def _data_ref(spec):
+    """绑定行的数据文件引用；无数据文件资产的算法打 '-'。"""
+    return f"calibration={getattr(spec, 'calibration', '') or '-'}"
+
+
 def format_manifest(cfg, source=""):
-    """按 相机 -> 算法 -> schedule -> calibration -> status 打印清单。"""
+    """按 相机 -> 算法 -> schedule -> 数据引用 -> status 打印清单。"""
     s = cfg.schedule
     c = cfg.callback
     lines = ["Runtime Configuration"]
@@ -403,6 +426,6 @@ def format_manifest(cfg, source=""):
             status = spec.status.value if isinstance(spec.status, CalibrationStatus) else spec.status
             lines.append(
                 f"      - algorithm={name} schedule={binding.schedule} "
-                f"calibration={spec.calibration} status={status}"
+                f"{_data_ref(spec)} status={status}"
             )
     return "\n".join(lines)

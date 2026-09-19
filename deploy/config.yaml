@@ -8,7 +8,7 @@
 # 三层边界：
 #   本文件 / runtime + schedule + callback + cameras  -> “跑什么/何时跑/输出给谁”
 #   算法业务策略（rollowing confidence/min_interval/hold/reconfirm） -> 本文件
-#   算法标定（CV 参数 / ROI / 灯表） -> 各算法包 calibration 文件（只给路径）
+#   算法数据资产（水马 ROI/road 几何） -> 算法包 calibration 文件（只给路径）
 #
 # 红线（写入所有实施任务书）：
 #   ① series_cap=600 只是 benchmark，不是 production 默认（此处为 null=全序列）
@@ -61,7 +61,6 @@ cameras:
       night_lamp:
         enabled: true
         schedule: night
-        calibration: "night_lamp/configs/config_1749.yaml"
         status: ready                 # manifest-only
         night_gate: {enter_threshold: 100.0, exit_threshold: 120.0, persistence: 2}
         sampling: {interval_ms: 160}          # Phase 1 起点，非最终真理
@@ -91,7 +90,6 @@ cameras:
       night_lamp:
         enabled: true                 # 明确启用，不得因 pending 静默关闭
         schedule: night
-        calibration: "night_lamp/configs/config_1750.yaml"
         status: calibration_pending   # 8 盏 active，参数待重标（manifest-only）
         night_gate: {enter_threshold: 140.0, exit_threshold: 150.0, persistence: 2}
         sampling: {interval_ms: 160}

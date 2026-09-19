@@ -9,7 +9,7 @@
 # 构建上下文 = deploy/ 目录（见 docker-compose.yml），自包含生产世界：
 #   app/ 下 server/ water_barrier/ night_lamp/ 三个包，包名不变、import 不变；
 #   COPY app/ /app/ 后 PYTHONPATH=/app，`python -m server` 直接可用。
-# 标定 YAML 与 registry CSV 就在两个算法包里，随 app/ 一起进镜像。
+# 水马标定 YAML 在各算法包里，随 app/ 一起进镜像。
 
 FROM python:3.12-slim
 

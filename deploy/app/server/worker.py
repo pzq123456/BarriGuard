@@ -38,10 +38,6 @@ def _default_day_runner(camera, spec, algo):
 def _default_night_adapter(camera_id, spec, clock):
     from night_lamp.adapter import NightAdapter
     from night_lamp.session import NightSession
-    cal = _load_calibration("night_lamp", spec)
-    lamps = (cal.get("registry") or {}).get("lamps") if isinstance(cal, dict) else None
-    logger.info("[{}] night_lamp 标定校验通过: {} lamps", camera_id,
-                len(lamps) if lamps is not None else "?")
     return NightAdapter(NightSession(camera_id, spec), spec, clock)
 
 
@@ -96,8 +92,8 @@ def _load_calibration(name, spec):
     if not isinstance(cal, str):
         return _apply_spec_policy(cal, spec)
     from .config import ROOT
-    from .config_validate import resolve_calibration
-    resolved = resolve_calibration(cal, ROOT, f"algorithm.{name}.calibration")
+    from .config_validate import resolve_resource
+    resolved = resolve_resource(cal, ROOT, f"algorithm.{name}.calibration")
     return _apply_spec_policy(registry.load_calib(name, resolved), spec)
 
 
