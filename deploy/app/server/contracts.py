@@ -72,7 +72,7 @@ class WaterGapSpec:
     """水马：算法逻辑不变，只配业务策略与出图节奏。"""
     calibration: str = ""
     schedule: str = "day"             # 由 config 决定，不写死
-    status: CalibrationStatus = CalibrationStatus.READY
+    status: CalibrationStatus = CalibrationStatus.READY  # manifest-only, no runtime branch
 
     report_interval_s: int = 3600     # 每小时一张缺口图
     alarm_min_interval_s: int = 3600  # 最小告警间隔（与 report 独立）
@@ -135,7 +135,7 @@ class NightLampSpec:
     """夜灯：以 nightly_map 为目标算法，整夜在线累积，07:00 finalize。"""
     calibration: str = ""
     schedule: str = "night"
-    status: CalibrationStatus = CalibrationStatus.READY
+    status: CalibrationStatus = CalibrationStatus.READY  # manifest-only, no runtime branch
 
     night_gate: dict = field(default_factory=dict)   # enter/exit/persistence
     sampling: SamplingSpec = field(default_factory=SamplingSpec)
@@ -168,5 +168,5 @@ class RuntimeConfig:
     callback: CallbackSpec = field(default_factory=CallbackSpec)
     cameras: list = field(default_factory=list)      # list[CameraSpec]
     server: dict = field(default_factory=dict)       # host/port/jpeg_quality/...
-    memory_budget_mb_per_camera: int = 500
+    memory_budget_mb_per_camera: int = 500           # manifest-only, not consumed at runtime
     output_dir: str = ""                             # 空 = 不落盘；host-mounted root

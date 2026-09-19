@@ -51,7 +51,7 @@ RUNTIME_KEYS = {
     "host", "port", "jpeg_quality", "log_level", "memory_budget_mb_per_camera",
     "output_dir",
 }
-RUNTIME_REQUIRED = ("host", "port", "memory_budget_mb_per_camera")
+RUNTIME_REQUIRED = ("host", "port")
 
 SCHEDULE_KEYS = {
     "timezone", "day_start", "day_end", "night_start", "night_end", "report_at",
@@ -197,11 +197,13 @@ def _parse_runtime(d, where):
         server["log_level"] = _as_str(d["log_level"], f"{where}.log_level")
     if "output_dir" in d:
         server["output_dir"] = _as_str(d["output_dir"], f"{where}.output_dir")
-    mem = _as_int(
-        d["memory_budget_mb_per_camera"],
-        f"{where}.memory_budget_mb_per_camera",
-        minimum=1,
-    )
+    mem = None
+    if "memory_budget_mb_per_camera" in d:  # manifest-only, optional
+        mem = _as_int(
+            d["memory_budget_mb_per_camera"],
+            f"{where}.memory_budget_mb_per_camera",
+            minimum=1,
+        )
     return server, mem
 
 
@@ -360,14 +362,16 @@ def parse_runtime(data, base_dir, source="<config>"):
     cameras = _parse_cameras(data["cameras"], Path(base_dir))
     if not cameras:
         raise ConfigError(f"{source}: 没有启用任何相机")
-    return RuntimeConfig(
+    kwargs = dict(
         schedule=schedule,
         callback=callback,
         cameras=cameras,
         server=server,
-        memory_budget_mb_per_camera=mem,
         output_dir=server.get("output_dir", ""),
     )
+    if mem is not None:
+        kwargs["memory_budget_mb_per_camera"] = mem
+    return RuntimeConfig(**kwargs)
 
 
 def format_manifest(cfg, source=""):

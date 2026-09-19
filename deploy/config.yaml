@@ -23,7 +23,7 @@ runtime:
   port: 8000
   jpeg_quality: 80
   log_level: "warning"
-  memory_budget_mb_per_camera: 500
+  memory_budget_mb_per_camera: 500  # manifest-only, optional
   output_dir: "data"               # 落盘根目录；docker 挂载 ./data:/app/data
 
 schedule:
@@ -51,7 +51,7 @@ cameras:
         enabled: true
         schedule: day
         calibration: "water_barrier/configs/1749.yaml"
-        status: ready
+        status: ready                 # manifest-only
         report_interval_s: 3600     # 每小时一张缺口图（报告节奏）
         alarm_min_interval_s: 3600  # 最小告警间隔（与 report 独立）
         confidence: 0.25            # RER 门
@@ -62,7 +62,7 @@ cameras:
         enabled: true
         schedule: night
         calibration: "night_lamp/configs/config_1749.yaml"
-        status: ready
+        status: ready                 # manifest-only
         night_gate: {enter_threshold: 100.0, exit_threshold: 120.0, persistence: 2}
         sampling: {interval_ms: 160}          # Phase 1 起点，非最终真理
         memory: {max_candidates: 200, series_cap: null}   # null=全序列；600 仅 benchmark
@@ -81,7 +81,7 @@ cameras:
         enabled: true
         schedule: day
         calibration: "water_barrier/configs/1750.yaml"
-        status: calibration_pending   # 沿用但待重标；pending 只打印，不禁用
+        status: calibration_pending   # 沿用但待重标；pending 只打印，不禁用（manifest-only）
         report_interval_s: 3600
         alarm_min_interval_s: 3600
         confidence: 0.50              # 1750 标定更严
@@ -92,7 +92,7 @@ cameras:
         enabled: true                 # 明确启用，不得因 pending 静默关闭
         schedule: night
         calibration: "night_lamp/configs/config_1750.yaml"
-        status: calibration_pending   # 8 盏 active，参数待重标
+        status: calibration_pending   # 8 盏 active，参数待重标（manifest-only）
         night_gate: {enter_threshold: 140.0, exit_threshold: 150.0, persistence: 2}
         sampling: {interval_ms: 160}
         memory: {max_candidates: 200, series_cap: null}

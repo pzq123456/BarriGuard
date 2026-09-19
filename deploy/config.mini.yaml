@@ -9,7 +9,7 @@ runtime:
   port: 8000
   jpeg_quality: 80
   log_level: "info"
-  memory_budget_mb_per_camera: 500
+  memory_budget_mb_per_camera: 500  # manifest-only, optional
   output_dir: "data"
 
 # 全天近似 NIGHT，便于启动后立即进入夜间 burst（仅验证用）。
