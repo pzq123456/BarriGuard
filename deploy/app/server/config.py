@@ -12,7 +12,9 @@ from pathlib import Path
 
 import yaml
 
-from .config_validate import ConfigError, format_manifest, parse_runtime
+from .config_validate import (
+    ConfigError, format_effective, format_manifest, parse_runtime,
+)
 
 # 生产世界包根 = deploy/app；标定路径与配置定位都相对它。
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,4 +51,5 @@ def load_runtime(path=None):
     data = yaml.safe_load(fp.read_text(encoding="utf-8"))
     cfg = parse_runtime(data, base_dir=fp.parent, source=str(fp))
     print(format_manifest(cfg, source=str(fp)))
+    print(format_effective(cfg, source=str(fp)))
     return cfg

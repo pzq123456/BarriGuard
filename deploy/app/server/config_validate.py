@@ -10,8 +10,9 @@
 """
 from __future__ import annotations
 
+import json
 import typing
-from dataclasses import fields as _dc_fields
+from dataclasses import fields as _dc_fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -38,7 +39,8 @@ from .contracts import (
 
 ROOT = Path(__file__).resolve().parent.parent
 
-__all__ = ["ConfigError", "parse_runtime", "format_manifest", "resolve_resource"]
+__all__ = ["ConfigError", "parse_runtime", "format_manifest", "format_effective",
+           "resolve_resource"]
 
 
 class ConfigError(RuntimeError):
@@ -433,3 +435,28 @@ def format_manifest(cfg, source=""):
                 f"{_data_ref(spec)} status={status}"
             )
     return "\n".join(lines)
+
+
+def _plain(obj):
+    """dataclass / Enum / dict / list -> JSON 可序列化的纯 Python 值。"""
+    if isinstance(obj, Enum):
+        return obj.value
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: _plain(getattr(obj, f.name)) for f in _dc_fields(obj)}
+    if isinstance(obj, dict):
+        return {k: _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v) for v in obj]
+    return obj
+
+
+def format_effective(cfg, source=""):
+    """最终生效配置（defaults + yaml + env 合并后）打印为 JSON。
+
+    这是排查“这次运行到底吃了哪些值”的唯一权威输出，避免回翻多份文件。
+    """
+    header = "Effective Configuration (JSON)"
+    if source:
+        header += f"  source={source}"
+    return header + "\n" + json.dumps(
+        _plain(cfg), ensure_ascii=False, sort_keys=True, indent=2)
