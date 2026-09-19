@@ -10,13 +10,19 @@ services:
     container_name: barriguard
     environment:
       - TZ=Asia/Shanghai
-      - BARRIGUARD_CONFIG=/app/config.yaml
+      # 生产配置；mini-night 验证可 export BARRIGUARD_CONFIG=/app/config.mini.yaml
+      - BARRIGUARD_CONFIG=${BARRIGUARD_CONFIG:-/app/config.yaml}
     ports:
       - "18080:8000"                 # host:container
     volumes:
       # 运行期配置覆盖镜像内兜底 config.yaml，路径与 env 一致。
       # server/config.py 优先读 BARRIGUARD_CONFIG，回落到 ROOT/config.yaml。
       - ./config.yaml:/app/config.yaml:ro
+      - ./config.mini.yaml:/app/config.mini.yaml:ro
+      # 结果落盘：host 仓库根 data/ 可直接检查（restart 不丢已有文件）。
+      - ../data:/app/data
+      # 本地输入源（mini 用）；生产走 RTSP 时此挂载不生效。
+      - ../tmp:/app/tmp:ro
     cpus: "2"
     mem_limit: 4g
     restart: unless-stopped

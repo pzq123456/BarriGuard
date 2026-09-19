@@ -50,6 +50,15 @@ def _default_reporter(cfg):
     return Reporter(cfg)
 
 
+def _default_store(cfg):
+    """output_dir 为空时不落盘（测试/旧部署）；否则写 host-mounted 目录。"""
+    out = str(getattr(cfg, "output_dir", "") or "").strip()
+    if not out:
+        return None
+    from .output import ReportStore
+    return ReportStore(out)
+
+
 # 业务策略字段 -> 算法标定 track 键（仅当 spec 暴露该字段时 additive 覆盖）。
 _SPEC_POLICY = (("confidence", "rer_threshold"),
                 ("alarm_hold_s", "alarm_hold_s"),
@@ -95,12 +104,13 @@ class CameraWorker:
     def __init__(self, camera, scheduler: Scheduler, reporter,
                  jpeg_quality: int = 80, evidence=None,
                  clock: Clock | None = None,
-                 day_factory=None, night_factory=None):
+                 day_factory=None, night_factory=None, store=None):
         self._camera = camera
         self.id = camera.id
         self.name = getattr(camera, "name", None) or camera.id
         self._scheduler = scheduler
         self._reporter = reporter
+        self._store = store
         self._clock = clock or RealClock()
         self._quality = jpeg_quality
         self._evidence = evidence
@@ -155,6 +165,27 @@ class CameraWorker:
         with self._lock:
             return list(self._events)
 
+    def publish(self, report) -> None:
+        """落盘（若配置 output_dir）+ 异步 callback；任何失败都不冒泡。"""
+        if report is None:
+            return
+        if self._store is not None:
+            try:
+                self._store.save(report)
+            except Exception:
+                logger.exception("[{}] report 落盘失败", self.id)
+        try:
+            self._reporter.submit(report)
+        except Exception:
+            logger.exception("[{}] report submit 失败", self.id)
+
+    @staticmethod
+    def _take_night_reports(adapter) -> list:
+        take = getattr(adapter, "take_reports", None)
+        if take is None:
+            return []
+        return take() or []
+
     # ------------------------------------------------------------ Runtime 回调
     def start_night(self):
         """NIGHT_START：为每个 schedule=night 的绑定建独立 NightAdapter。"""
@@ -191,7 +222,7 @@ class CameraWorker:
             try:
                 report = ad.finalize(base, ts_wall)
                 if report is not None:
-                    self._reporter.submit(report)
+                    self.publish(report)
             except Exception:
                 logger.exception("[{}] night finalize 失败: {}", self.id, name)
             finally:
@@ -265,9 +296,9 @@ class CameraWorker:
                 events += res.events
                 for rep in getattr(res, "reports", None) or ():
                     try:
-                        self._reporter.submit(rep)
+                        self.publish(rep)
                     except Exception:
-                        logger.exception("[{}] submit report 失败: {}",
+                        logger.exception("[{}] publish report 失败: {}",
                                          self.id, name)
                 if isinstance(res.debug.get("frame_status"), str):
                     status = res.debug["frame_status"]
@@ -281,6 +312,9 @@ class CameraWorker:
                     ad.on_frame(frame, now_wall, now_mono)
                 except Exception:
                     logger.exception("[{}] night on_frame 失败: {}", self.id, name)
+                    continue
+                for rep in self._take_night_reports(ad):
+                    self.publish(rep)
 
             mask = debug.get("roi_mask")
             vis = render.draw_annots(
@@ -330,6 +364,7 @@ class Runtime:
         quality = 80
         if isinstance(getattr(cfg, "server", None), dict):
             quality = int(cfg.server.get("jpeg_quality", 80))
+        self.store = _default_store(cfg)
         self.workers = {}
         for cam in cfg.cameras or []:
             if not getattr(cam, "enabled", True):
@@ -337,7 +372,7 @@ class Runtime:
             self.workers[cam.id] = CameraWorker(
                 cam, self.scheduler, self.reporter, quality, evidence=evidence,
                 clock=self.clock, day_factory=day_factory,
-                night_factory=night_factory)
+                night_factory=night_factory, store=self.store)
         self._stop = threading.Event()
         self._thread = None
 
@@ -388,4 +423,4 @@ class Runtime:
             if w is None:
                 return
             for rep in w.snapshot_reports(ev.at):
-                self.reporter.submit(rep)
+                w.publish(rep)

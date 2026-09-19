@@ -24,6 +24,7 @@ runtime:
   jpeg_quality: 80
   log_level: "warning"
   memory_budget_mb_per_camera: 500
+  output_dir: "data"               # 落盘根目录；docker 挂载 ./data:/app/data
 
 schedule:
   timezone: "Asia/Shanghai"
@@ -69,6 +70,7 @@ cameras:
         periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
                       peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
         alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}
+        overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}
 
   - id: "1750"
     name: "Mobile Camera 1750"
@@ -98,3 +100,4 @@ cameras:
         periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
                       peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
         alignment: {method: ecc_translation, min_cc: 0.5, on_low_cc: degraded}
+        overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}

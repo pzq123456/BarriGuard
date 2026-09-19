@@ -64,11 +64,19 @@ class Reader:
         return out
 
     def _loop(self):
+        if not self._is_stream():
+            logger.info("本地输入(cv2): {}", self._url)
+            self._loop_cv()
+            return
         if shutil.which("ffmpeg"):
             self._loop_pipe()
         else:
             logger.warning("无 ffmpeg，走 cv2 回退（HEVC 可能灰帧）")
             self._loop_cv()
+
+    def _is_stream(self) -> bool:
+        return self._url.lower().startswith(
+            ("rtsp://", "rtsps://", "http://", "https://", "rtmp://"))
 
     def _geometry(self):
         """ffprobe 取宽高；失败用 cv2 读一帧看形状（灰帧形状也对）尽量返回；都失败返回 None。"""

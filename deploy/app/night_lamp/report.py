@@ -21,7 +21,8 @@ from server.algo import Report  # noqa: E402
 from server.contracts import AlignmentStatus  # noqa: E402
 
 ALGO_NAME = "night_lamp"
-REPORT_TYPE = "night_heatmap"
+REPORT_TYPE = "night_heatmap"          # 早晨最终热力图
+REPORT_TYPE_BURST = "night_heatmap_burst"  # 每小时 burst 累计热力图
 JPEG_QUALITY = 80
 
 STATUS_OK = "ok"
@@ -46,14 +47,17 @@ M_WARMUP = "warmup"
 M_MEMORY_MB = "memory_estimate_mb"
 M_LAG_FRAMES = "lag_frames"
 M_PERIOD_STEP = "period_step"
+M_BURST = "burst"
+M_ADAPTER = "adapter"
 
 IMAGE_MODE_NIGHT = "night"
 IMAGE_MODE_DAY = "day_overlay"
 
 
-def build_report(camera_id, created_at, image_jpeg, metadata, status=STATUS_OK):
+def build_report(camera_id, created_at, image_jpeg, metadata, status=STATUS_OK,
+                 report_type=REPORT_TYPE):
     """Assemble the frozen Report dataclass for a night heatmap."""
-    return Report(camera=camera_id, algorithm=ALGO_NAME, report_type=REPORT_TYPE,
+    return Report(camera=camera_id, algorithm=ALGO_NAME, report_type=report_type,
                   created_at=created_at, image_jpeg=image_jpeg,
                   metadata=metadata, status=status)
 

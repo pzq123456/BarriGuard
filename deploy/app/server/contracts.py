@@ -21,7 +21,8 @@ __all__ = [
     "Report", "ScheduleState", "CalibrationStatus", "AlignmentStatus",
     "ScheduleSpec", "CallbackSpec", "WaterGapSpec", "SamplingSpec",
     "MemorySpec", "BaselineSpec", "PeriodicitySpec", "AlignmentSpec",
-    "NightLampSpec", "AlgorithmBinding", "CameraSpec", "RuntimeConfig",
+    "OvernightSpec", "NightLampSpec", "AlgorithmBinding", "CameraSpec",
+    "RuntimeConfig",
 ]
 
 
@@ -119,6 +120,17 @@ class AlignmentSpec:
 
 
 @dataclass
+class OvernightSpec:
+    """夜间 burst 调度：每小时一段连续 burst，空间累计跨 burst 保留。
+
+    enabled=False 时退回旧的“整夜单一 NightSession”行为。
+    """
+    enabled: bool = False
+    cadence_minutes: int = 60         # burst 间隔
+    burst_seconds: int = 120          # 每段连续观测时长
+
+
+@dataclass
 class NightLampSpec:
     """夜灯：以 nightly_map 为目标算法，整夜在线累积，07:00 finalize。"""
     calibration: str = ""
@@ -131,6 +143,7 @@ class NightLampSpec:
     baseline: BaselineSpec = field(default_factory=BaselineSpec)
     periodicity: PeriodicitySpec = field(default_factory=PeriodicitySpec)
     alignment: AlignmentSpec = field(default_factory=AlignmentSpec)
+    overnight: OvernightSpec = field(default_factory=OvernightSpec)
 
 
 @dataclass
@@ -156,3 +169,4 @@ class RuntimeConfig:
     cameras: list = field(default_factory=list)      # list[CameraSpec]
     server: dict = field(default_factory=dict)       # host/port/jpeg_quality/...
     memory_budget_mb_per_camera: int = 500
+    output_dir: str = ""                             # 空 = 不落盘；host-mounted root

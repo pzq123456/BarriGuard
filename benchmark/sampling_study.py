@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -482,6 +483,13 @@ def run(args) -> dict:
               f"P={row['temporal']['persistent'] if row['temporal'] else None} "
               f"R={row['temporal']['reset'] if row['temporal'] else None}")
 
+    figs = {}
+    if args.save_images:
+        figs = save_policy_figs(states, policies, args.camera, Path(args.out))
+        ref_fig = save_fig(ref, "continuous", args.camera, Path(args.out))
+        if ref_fig:
+            figs["continuous"] = ref_fig
+
     return {
         "mode": "sampling_study",
         "video": str(video.resolve()),
@@ -500,7 +508,40 @@ def run(args) -> dict:
                       "n_cand_all": tgt["n_cand_all"]},
         "policy_pass": pass_meta,
         "policies": rows,
+        "figs": figs,
     }
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", name).strip("_")
+
+
+def save_fig(sess, name: str, camera: str, outdir: Path):
+    """Finalize one session into its night heatmap JPEG (production render).
+
+    The session already holds the cumulative duty/peak maps after ``freeze()``;
+    finalize(None, ...) renders the night-mode heatmap exactly as production
+    would at 07:00 (no day base -> pure night composite).
+    """
+    figs_dir = outdir / "figs"
+    figs_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc)
+    try:
+        rep = sess.finalize(None, ts)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [fig] {name}: finalize failed {type(exc).__name__}: {exc}")
+        return None
+    if rep is None or not rep.image_jpeg:
+        return None
+    fp = figs_dir / f"{camera}_{_slug(name)}.jpg"
+    fp.write_bytes(rep.image_jpeg)
+    print(f"  [fig] {name}: {fp}")
+    return str(fp)
+
+
+def save_policy_figs(states, policies, camera: str, outdir: Path) -> dict:
+    return {name: save_fig(states[name].persistent, name, camera, outdir)
+            for name in policies}
 
 
 def main(argv=None) -> int:
@@ -515,6 +556,8 @@ def main(argv=None) -> int:
                     help="observation gap that starts a new temporal burst")
     ap.add_argument("--random-seed", type=int, default=0)
     ap.add_argument("--out", default="benchmark/out")
+    ap.add_argument("--save-images", action="store_true",
+                    help="write one night-heatmap JPEG per policy under out/figs")
     a = ap.parse_args(argv)
     outdir = Path(a.out)
     outdir.mkdir(parents=True, exist_ok=True)

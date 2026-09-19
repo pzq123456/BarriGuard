@@ -24,6 +24,11 @@ Design (and the online-vs-golden deltas this file makes explicit):
   is surfaced as ``Report.status == "degraded"``.
 * ``series_cap is None`` keeps the full sequence (production default).
   A non-None cap keeps only the tail window and is marked experimental.
+* Overnight burst mode (``spec.overnight.enabled``): ``begin_burst`` resets the
+  temporal state (``TemporalSeries`` + ``CandidateDiscovery``) but keeps the
+  spatial accumulators, so a night is a series of bounded bursts whose duty/peak
+  maps merge into one cumulative heatmap.  ``snapshot`` emits that heatmap
+  without freezing or releasing.  Disabled -> one continuous session.
 * ``release()`` drops every accumulator so a failed/hung finalize cannot leak
   into the next night.
 
@@ -41,6 +46,7 @@ import sys
 
 import cv2 as cv
 import numpy as np
+from loguru import logger
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -359,14 +365,29 @@ class NightSession:
         self._spec = spec
         self._max_candidates = int(spec.memory.max_candidates)
         self._series_cap = spec.memory.series_cap
-        max_points = 3 * self._max_candidates + nm.DYN_MAX_PEAK
-        self._series = TemporalSeries(max_points, cap=self._series_cap)
+        self._max_points = 3 * self._max_candidates + nm.DYN_MAX_PEAK
+        self._series = TemporalSeries(self._max_points, cap=self._series_cap)
         self._discovery = CandidateDiscovery(self._series, self._max_candidates)
         self._baseline_frames = max(1, int(spec.baseline.frames))
         self._warmup_s = float(spec.baseline.warmup_s)
         self._period = spec.periodicity
         self._alignment = spec.alignment
         self._discovery_every = _DISCOVERY_EVERY
+
+        # Overnight burst mode: spatial accumulators persist, temporal state is
+        # reset per burst by ``begin_burst``.  Duck-typed so tests constructing
+        # a bare NightLampSpec keep the old single-session behaviour.
+        ov = getattr(spec, "overnight", None)
+        self._overnight = bool(getattr(ov, "enabled", False))
+        self._cadence_minutes = int(getattr(ov, "cadence_minutes", 60))
+        self._burst_seconds = int(getattr(ov, "burst_seconds", 120))
+        self._burst_first_ts = None
+        self._burst_last_ts = None
+        self._burst_n = 0
+        self._burst_started_wall = None
+        self._burst_ended_wall = None
+        self._overflow_any = False
+        self._last_snapshot_n = 0
 
         self._mask = None
         self._h = self._w = 0
@@ -383,13 +404,36 @@ class NightSession:
         self._excess = None
         self._on_hit = None
 
-        self._meds = []
         self._n_seen = 0
         self._first_ts = None
         self._last_ts = None
         self._frozen = False
         self._released = False
         self._dropped_after_freeze = 0
+        self._init_gate(spec.night_gate)
+
+    def _init_gate(self, gate):
+        """Online night-qualification state (O(1); no full-night median list)."""
+        gate = gate or {}
+        self._gate_enter = None
+        self._gate_exit = None
+        self._gate_persistence = 1
+        self._gate_configured = False
+        self._gate_valid = False
+        try:
+            te, tx = gate.get("enter_threshold"), gate.get("exit_threshold")
+            if te is not None and tx is not None:
+                self._gate_enter = float(te)
+                self._gate_exit = float(tx)
+                self._gate_persistence = max(1, int(gate.get("persistence", 1)))
+                self._gate_configured = True
+                self._gate_valid = self._gate_enter < self._gate_exit
+        except (TypeError, ValueError):
+            self._gate_configured = self._gate_valid = False
+        self._gate_state = NS.TWILIGHT
+        self._gate_count = 0
+        self._gate_transitions = 0
+        self._gate_samples = 0
 
     @property
     def sample_count(self) -> int:
@@ -397,7 +441,7 @@ class NightSession:
 
     @property
     def candidate_overflow(self) -> bool:
-        return self._discovery.overflow
+        return self._overflow_any or self._discovery.overflow
 
     def accumulate(self, frame_bgr, ts_mono: float) -> None:
         if self._released:
@@ -412,9 +456,13 @@ class NightSession:
         if self._first_ts is None:
             self._first_ts = float(ts_mono)
         self._last_ts = float(ts_mono)
+        if self._burst_first_ts is None:
+            self._burst_first_ts = float(ts_mono)
+        self._burst_last_ts = float(ts_mono)
+        self._burst_n += 1
         med = float(np.median(gray))
         self._n_seen += 1
-        self._meds.append(med)
+        self._update_gate(med)
 
         if not self._warm_done:
             if self._first_warm_ts is None:
@@ -496,6 +544,73 @@ class NightSession:
             return
         duty = self._on / float(self._n_seen)
         self._discovery.observe(duty, self._on, self._n_seen, self._peak)
+        self._overflow_any = self._overflow_any or self._discovery.overflow
+
+    def _update_gate(self, med):
+        """Stream the night_gate hysteresis; O(1) state, no median history."""
+        self._gate_samples += 1
+        if not (self._gate_configured and self._gate_valid):
+            return
+        prev = self._gate_state
+        self._gate_state, self._gate_count, _entered = NS.update(
+            self._gate_state, self._gate_count, float(med), self._gate_enter,
+            self._gate_exit, self._gate_persistence)
+        if self._gate_state != prev:
+            self._gate_transitions += 1
+
+    def begin_burst(self, ts_wall=None) -> None:
+        """Start a burst: keep spatial accumulators, reset temporal tracking.
+
+        Called by the overnight adapter at each burst boundary (and once at
+        night start).  ``_base/_bg/_on/_peak/_mask/_n_seen`` persist so the
+        heatmap keeps accumulating across the whole night.
+        """
+        if self._released:
+            raise RuntimeError("NightSession is released")
+        self._series.release()
+        self._series = TemporalSeries(self._max_points, cap=self._series_cap)
+        self._discovery.release()
+        self._discovery = CandidateDiscovery(self._series, self._max_candidates)
+        self._burst_first_ts = None
+        self._burst_last_ts = None
+        self._burst_n = 0
+        self._burst_started_wall = ts_wall
+        self._burst_ended_wall = None
+
+    def snapshot(self, ts_wall) -> "R.Report | None":
+        """Burst-end cumulative heatmap; does not freeze or release.
+
+        Returns ``None`` when the burst added no observations since the last
+        snapshot, so a silent hour does not emit a duplicate report.
+        """
+        if self._released:
+            raise RuntimeError("NightSession is released")
+        if self._n_seen <= self._last_snapshot_n:
+            return None
+        if not self._warm_done and self._n_seen > 0:
+            self._finish_warmup()
+        created_at = (ts_wall.isoformat() if hasattr(ts_wall, "isoformat")
+                      else str(ts_wall))
+        night = self._night_qualification()
+        self._burst_ended_wall = ts_wall
+        self._last_snapshot_n = self._n_seen
+        if self._base is None:
+            return None
+        try:
+            return self._finalize_inner(None, created_at, night,
+                                        report_type=R.REPORT_TYPE_BURST)
+        except Exception as exc:  # never raise into the runtime loop
+            logger.exception("night burst snapshot failed")
+            meta = {
+                R.M_ALIGNMENT: AlignmentStatus.REJECTED.value,
+                R.M_CANDIDATE_OVERFLOW: bool(self.candidate_overflow),
+                R.M_SAMPLING: self._sampling_metadata(),
+                R.M_REASON: "%s: %s" % (type(exc).__name__, exc),
+            }
+            meta.update(self._night_meta(night))
+            return R.build_report(self._camera_id, created_at, None, meta,
+                                  status=R.STATUS_FAILED,
+                                  report_type=R.REPORT_TYPE_BURST)
 
     def freeze(self) -> None:
         if self._released:
@@ -508,16 +623,23 @@ class NightSession:
         self._run_discovery()
 
     def _rate_hz(self):
-        if self._first_ts is None or self._last_ts is None:
+        if self._overnight:
+            first, last, n = self._burst_first_ts, self._burst_last_ts, self._burst_n
+        else:
+            first, last, n = self._first_ts, self._last_ts, self._n_seen
+        if first is None or last is None:
             return 0.0
-        span = self._last_ts - self._first_ts
+        span = last - first
         if span <= 0:
             return 0.0
-        return (self._n_seen - 1) / span
+        return (n - 1) / span
 
     def _sampling_metadata(self):
         span = (0.0 if self._first_ts is None or self._last_ts is None
                 else self._last_ts - self._first_ts)
+        burst_span = (0.0 if self._burst_first_ts is None
+                      or self._burst_last_ts is None
+                      else self._burst_last_ts - self._burst_first_ts)
         return {
             "interval_ms": int(self._spec.sampling.interval_ms),
             "actual_samples": int(self._n_seen),
@@ -526,6 +648,13 @@ class NightSession:
             "mode": "tail" if self._series_cap is not None else "full",
             "series_cap": self._series_cap,
             "experimental_tail_window": self._series_cap is not None,
+            "burst_samples": int(self._burst_n),
+            "burst_span_s": round(burst_span, 3),
+            "overnight": {
+                "enabled": self._overnight,
+                "cadence_minutes": self._cadence_minutes,
+                "burst_seconds": self._burst_seconds,
+            },
         }
 
     def _memory_estimate_mb(self):
@@ -535,66 +664,37 @@ class NightSession:
         for a in (self._base, self._bg, self._on, self._peak, self._mask):
             if a is not None:
                 total += int(a.nbytes)
-        if self._meds:
-            total += len(self._meds) * 8
         return round(total / 1048576.0, 1)
 
     def _night_qualification(self):
-        """Replay ``NightLampSpec.night_gate`` over the accumulated medians.
+        """Report the online night_gate hysteresis labels.
 
-        This is a pure *consumer* of state the session already holds: it reads
-        ``self._meds`` (the global per-sample medians) and applies the exact
-        hysteresis rule of ``night_state.update`` (enter_threshold <
-        exit_threshold, ``persistence`` consecutive dark samples to enter, one
-        bright sample above exit to leave).  It never drops samples and never
-        feeds back into the nightly map maths, so the golden/online numerics
-        are unchanged -- it only labels the night for the report.
+        The state is streamed in ``_update_gate`` using the exact hysteresis
+        rule of ``night_state.update`` (enter_threshold < exit_threshold,
+        ``persistence`` consecutive dark samples to enter, one bright sample
+        above exit to leave).  No full-night median list is retained, and it
+        never feeds back into the nightly map maths -- it only labels the night.
         """
-        gate = self._spec.night_gate or {}
-        meds = self._meds or []
         info = {
-            "configured": False,
-            "valid": False,
-            "enter_threshold": gate.get("enter_threshold"),
-            "exit_threshold": gate.get("exit_threshold"),
-            "persistence": gate.get("persistence"),
-            "samples": len(meds),
-            "transitions": 0,
+            "configured": self._gate_configured,
+            "valid": self._gate_valid,
+            "enter_threshold": self._gate_enter,
+            "exit_threshold": self._gate_exit,
+            "persistence": self._gate_persistence,
+            "samples": int(self._gate_samples),
+            "transitions": int(self._gate_transitions),
         }
-        t_enter = gate.get("enter_threshold")
-        t_exit = gate.get("exit_threshold")
-        if t_enter is None or t_exit is None:
+        if not self._gate_configured:
             info["state"] = "not_configured"
             info["qualified"] = None
             return info
-        try:
-            t_enter = float(t_enter)
-            t_exit = float(t_exit)
-            persistence = max(1, int(gate.get("persistence", 1)))
-        except (TypeError, ValueError):
-            info["state"] = "invalid_gate"
-            info["qualified"] = None
-            return info
-        info["enter_threshold"] = t_enter
-        info["exit_threshold"] = t_exit
-        info["persistence"] = persistence
-        info["configured"] = True
-        if t_enter >= t_exit:
+        if not self._gate_valid:
             info["state"] = "invalid_gate"
             info["qualified"] = None
             info["reason"] = "requires enter_threshold < exit_threshold"
             return info
-        info["valid"] = True
-        state, count, transitions = NS.TWILIGHT, 0, 0
-        for g in meds:
-            prev = state
-            state, count, _entered = NS.update(
-                state, count, float(g), t_enter, t_exit, persistence)
-            if state != prev:
-                transitions += 1
-        info["state"] = state
-        info["qualified"] = (state == NS.NIGHT)
-        info["transitions"] = transitions
+        info["state"] = self._gate_state
+        info["qualified"] = (self._gate_state == NS.NIGHT)
         return info
 
     @staticmethod
@@ -619,7 +719,7 @@ class NightSession:
         if self._n_seen <= 0 or self._base is None:
             meta = {
                 R.M_ALIGNMENT: AlignmentStatus.BASE_UNAVAILABLE.value,
-                R.M_CANDIDATE_OVERFLOW: self._discovery.overflow,
+                R.M_CANDIDATE_OVERFLOW: bool(self.candidate_overflow),
                 R.M_SAMPLING: self._sampling_metadata(),
                 R.M_REASON: "no_samples",
             }
@@ -629,9 +729,10 @@ class NightSession:
         try:
             return self._finalize_inner(base_frame_bgr, created_at, night)
         except Exception as exc:  # never raise into the runtime loop
+            logger.exception("night finalize failed")
             meta = {
                 R.M_ALIGNMENT: AlignmentStatus.REJECTED.value,
-                R.M_CANDIDATE_OVERFLOW: self._discovery.overflow,
+                R.M_CANDIDATE_OVERFLOW: bool(self.candidate_overflow),
                 R.M_SAMPLING: self._sampling_metadata(),
                 R.M_REASON: "%s: %s" % (type(exc).__name__, exc),
             }
@@ -639,7 +740,8 @@ class NightSession:
             return R.build_report(self._camera_id, created_at, None, meta,
                                   status=R.STATUS_FAILED)
 
-    def _finalize_inner(self, base_frame_bgr, created_at, night):
+    def _finalize_inner(self, base_frame_bgr, created_at, night,
+                        report_type=R.REPORT_TYPE):
         duty = self._on / float(self._n_seen)
         swing = self._peak
         dyn, lab, stats, cand_all = nm.split_comps(duty)
@@ -652,7 +754,7 @@ class NightSession:
 
         cand_all = sorted(cand_all, key=lambda c: -stats[c, cv.CC_STAT_AREA])
         n_cand_total = len(cand_all)
-        overflow = (self._discovery.overflow
+        overflow = (self._overflow_any or self._discovery.overflow
                     or n_cand_total > self._max_candidates)
         cand = cand_all[:self._max_candidates]
         n_cand_dropped_final = max(0, n_cand_total - len(cand))
@@ -799,10 +901,28 @@ class NightSession:
                 "released": self._warm_stack is None,
             },
             R.M_MEMORY_MB: self._memory_estimate_mb(),
+            R.M_BURST: self._burst_metadata(),
         }
         meta.update(self._night_meta(night))
         return R.build_report(self._camera_id, created_at, jpeg, meta,
-                              status=status)
+                              status=status, report_type=report_type)
+
+    @staticmethod
+    def _iso(value):
+        if value is None:
+            return None
+        return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+    def _burst_metadata(self):
+        return {
+            "overnight": self._overnight,
+            "cadence_minutes": self._cadence_minutes,
+            "burst_seconds": self._burst_seconds,
+            "started_at": self._iso(self._burst_started_wall),
+            "ended_at": self._iso(self._burst_ended_wall),
+            "samples": int(self._burst_n),
+            "rate_hz": round(self._rate_hz(), 4),
+        }
 
     def release(self) -> None:
         self._warm_stack = None
@@ -814,7 +934,6 @@ class NightSession:
         self._excess = None
         self._on_hit = None
         self._mask = None
-        self._meds = None
         if self._series is not None:
             self._series.release()
         if self._discovery is not None:

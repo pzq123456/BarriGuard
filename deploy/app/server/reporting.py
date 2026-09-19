@@ -50,7 +50,8 @@ def _to_utc(value: str | None) -> str:
 
 def _report_alert_type(report_type: str) -> str:
     """Report.report_type -> 对外业务名 alert_type（只有两个业务名）。"""
-    return {"gap_overlay": "water_gap", "night_heatmap": "night_heatmap"}.get(
+    return {"gap_overlay": "water_gap", "night_heatmap": "night_heatmap",
+            "night_heatmap_burst": "night_heatmap"}.get(
         report_type, report_type or "report")
 
 

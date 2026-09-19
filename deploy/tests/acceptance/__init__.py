@@ -20,6 +20,7 @@ _SUBMODULES = (
     "test_night_lifecycle",
     "test_failure_isolation",
     "test_runtime_isolation",
+    "test_overnight_burst",
 )
 
 

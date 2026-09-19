@@ -27,6 +27,7 @@ from .contracts import (
     CameraSpec,
     MemorySpec,
     NightLampSpec,
+    OvernightSpec,
     PeriodicitySpec,
     RuntimeConfig,
     SamplingSpec,
@@ -49,6 +50,7 @@ TOP_REQUIRED = ("version", "runtime", "schedule", "callback", "cameras")
 
 RUNTIME_KEYS = {
     "host", "port", "jpeg_quality", "log_level", "memory_budget_mb_per_camera",
+    "output_dir",
 }
 RUNTIME_REQUIRED = ("host", "port", "memory_budget_mb_per_camera")
 
@@ -76,6 +78,7 @@ NESTED_SPECS = {
     "baseline": BaselineSpec,
     "periodicity": PeriodicitySpec,
     "alignment": AlignmentSpec,
+    "overnight": OvernightSpec,
 }
 # NightLampSpec.night_gate 是裸 dict（contracts 未定数据类），显式列出允许键
 NIGHT_GATE_KEYS = {"enter_threshold", "exit_threshold", "persistence"}
@@ -193,6 +196,8 @@ def _parse_runtime(d, where):
         server["jpeg_quality"] = q
     if "log_level" in d:
         server["log_level"] = _as_str(d["log_level"], f"{where}.log_level")
+    if "output_dir" in d:
+        server["output_dir"] = _as_str(d["output_dir"], f"{where}.output_dir")
     mem = _as_int(
         d["memory_budget_mb_per_camera"],
         f"{where}.memory_budget_mb_per_camera",
@@ -362,6 +367,7 @@ def parse_runtime(data, base_dir, source="<config>"):
         cameras=cameras,
         server=server,
         memory_budget_mb_per_camera=mem,
+        output_dir=server.get("output_dir", ""),
     )
 
 

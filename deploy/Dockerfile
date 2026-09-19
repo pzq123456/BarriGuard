@@ -40,7 +40,7 @@ COPY config.yaml /app/config.yaml
 # 可写目录：
 #   evidence/           报告/证据落盘兜底目录
 #   night_lamp/output/  night_lamp config 里 evidence.out 相对输出目录
-RUN mkdir -p /app/evidence /app/night_lamp/output
+RUN mkdir -p /app/evidence /app/night_lamp/output /app/data
 
 EXPOSE 8000
 
