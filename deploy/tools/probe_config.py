@@ -38,6 +38,7 @@ _STRUCTURAL_CALLERS = frozenset({
     "__repr__", "__str__", "__eq__", "__ne__", "__hash__", "__reduce__",
     "__reduce_ex__", "__getstate__", "__setstate__", "__deepcopy__",
     "__copy__", "_asdict_inner", "asdict", "astuple", "fields", "replace",
+    "_plain", "format_effective",
 })
 
 
