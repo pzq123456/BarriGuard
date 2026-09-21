@@ -29,6 +29,9 @@ from .source import Reader
 LOG_EVERY = 100
 EVENTS_KEPT = 200
 PUMP_INTERVAL_S = 0.5
+STOP_JOIN_TIMEOUT_S = 5.0
+STREAM_LOST_AFTER_S = 10.0
+STREAM_HEARTBEAT_S = 600.0
 
 
 def _default_day_runner(camera, spec, algo):
@@ -54,6 +57,24 @@ def _default_store(cfg):
         return None
     from .output import ReportStore
     return ReportStore(out)
+
+
+def _default_night_store(cfg):
+    """夜间累计快照目录；output_dir 为空则不启用续跑。"""
+    out = str(getattr(cfg, "output_dir", "") or "").strip()
+    if not out:
+        return None
+    from night_lamp.persist import NightStateStore
+    return NightStateStore(out)
+
+
+def _default_night_archive(cfg):
+    """夜间热力图核心数据（L1）归档目录；output_dir 为空则不启用。"""
+    out = str(getattr(cfg, "output_dir", "") or "").strip()
+    if not out:
+        return None
+    from night_lamp.persist import NightArchive
+    return NightArchive(out)
 
 
 # 业务策略字段 -> 算法 track 键（仅当 spec 暴露该字段时注入）。
@@ -105,13 +126,16 @@ class CameraWorker:
     def __init__(self, camera, scheduler: Scheduler, reporter,
                  jpeg_quality: int = 80, evidence=None,
                  clock: Clock | None = None,
-                 day_factory=None, night_factory=None, store=None):
+                 day_factory=None, night_factory=None, store=None,
+                 night_store=None, night_archive=None):
         self._camera = camera
         self.id = camera.id
         self.name = getattr(camera, "name", None) or camera.id
         self._scheduler = scheduler
         self._reporter = reporter
         self._store = store
+        self._night_store = night_store
+        self._night_archive = night_archive
         self._clock = clock or RealClock()
         self._quality = jpeg_quality
         self._evidence = evidence
@@ -129,6 +153,9 @@ class CameraWorker:
         self._day_runners: dict = {}
         self._night: dict = {}
         self._latest_frame = None
+        self._stop = threading.Event()
+        self._stream_lost = False
+        self._stream_last_emit = None
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name=f"cam-{self.id}")
 
@@ -142,12 +169,16 @@ class CameraWorker:
         return sorted((getattr(self._camera, "algorithms", None) or {}).keys())
 
     def start(self):
+        self._stop.clear()
         self._reader.start()
         self._thread.start()
         return self
 
     def stop(self):
+        self._stop.set()
         self._reader.stop()
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=STOP_JOIN_TIMEOUT_S)
 
     def latest(self):
         with self._lock:
@@ -197,11 +228,96 @@ class CameraWorker:
                 if name in self._night:
                     continue
                 try:
-                    self._night[name] = self._night_factory(
+                    ad = self._night_factory(
                         self.id, binding.spec, self._clock)
                 except Exception:
                     logger.exception("[{}] 创建 NightAdapter 失败: {}", self.id, name)
+                    continue
+                self._attach_night_state(ad, name)
+                self._night[name] = ad
         logger.info("[{}] 夜间采样开始: {}", self.id, sorted(self._night))
+
+    def _attach_night_state(self, adapter, name):
+        """挂上夜间快照 store 与 L1 归档，并尝试恢复本夜累计（跨重启续跑）。"""
+        attach = getattr(adapter, "attach_persistence", None)
+        if callable(attach) and self._night_store is not None:
+            try:
+                attach(self._night_store)
+            except Exception:
+                logger.exception("[{}] 夜间持久化挂载失败: {}", self.id, name)
+        attach_arch = getattr(adapter, "attach_archive", None)
+        if callable(attach_arch) and self._night_archive is not None:
+            try:
+                attach_arch(self._night_archive)
+            except Exception:
+                logger.exception("[{}] 夜间归档挂载失败: {}", self.id, name)
+        if self._night_store is None:
+            return
+        try:
+            adapter.restore()
+        except Exception:
+            logger.exception("[{}] 夜间状态恢复失败: {}", self.id, name)
+
+    def flush_night(self):
+        """停机前把在跑的夜间累计落盘；best-effort，不冒泡。"""
+        with self._lock:
+            adapters = list(self._night.values())
+        for ad in adapters:
+            save = getattr(ad, "save_state", None)
+            if not callable(save):
+                continue
+            try:
+                save()
+            except Exception:
+                logger.exception("[{}] night flush 失败", self.id)
+
+    def _check_stream_health(self, now_mono: float):
+        """检测断流/恢复并推状态事件；Reader 无 health() 时静默跳过。"""
+        health = getattr(self._reader, "health", None)
+        if not callable(health):
+            return
+        info = health()
+        if info.get("connected"):
+            if self._stream_lost:
+                self._stream_lost = False
+                self._stream_last_emit = now_mono
+                self._set_status("OK")
+                self._emit_status("stream_restored", info)
+            return
+        ref = info.get("last_frame_mono") or info.get("started_mono")
+        if ref is None or now_mono - ref < STREAM_LOST_AFTER_S:
+            return
+        if not self._stream_lost:
+            self._stream_lost = True
+            self._stream_last_emit = now_mono
+            self._set_status("STREAM_LOST")
+            self._emit_status("stream_lost", info)
+            return
+        if now_mono - (self._stream_last_emit or now_mono) >= STREAM_HEARTBEAT_S:
+            self._stream_last_emit = now_mono
+            self._emit_status("stream_lost", info)
+
+    def _set_status(self, status: str):
+        with self._lock:
+            self._status = status
+
+    def _emit_status(self, status: str, health: dict):
+        detail = {
+            "reconnects": health.get("reconnects"),
+            "seconds_since_frame": health.get("seconds_since_frame"),
+        }
+        submit = getattr(self._reporter, "submit_status", None)
+        if callable(submit):
+            try:
+                submit(self.id, status, detail=detail)
+            except Exception:
+                logger.exception("[{}] 状态上报失败: {}", self.id, status)
+        with self._lock:
+            self._events.append({"ts": datetime.now().astimezone().isoformat(),
+                                 "algo": "stream", "kind": "status",
+                                 "payload": {"status": status},
+                                 "evidence_path": None})
+        logger.warning("[{}] 流状态: {}", self.id, status)
 
     def freeze_night(self):
         """NIGHT_FREEZE：停止累积（各 session 冻结）。"""
@@ -271,8 +387,9 @@ class CameraWorker:
 
     def _loop(self):
         t0, n0 = time.time(), 0
-        while True:
+        while not self._stop.is_set():
             frame = self._reader.read()
+            self._check_stream_health(self._clock.monotonic())
             if frame is None:
                 time.sleep(0.05)
                 continue
@@ -347,8 +464,9 @@ class CameraWorker:
                                      "evidence_path": e.evidence_path} for e in events)
                 self._n += 1
             if self._n - n0 >= LOG_EVERY:
+                elapsed = max(time.time() - t0, 1e-6)
                 logger.info("[{}] 处理 {} 帧, {:.1f} fps", self.id, self._n,
-                            (self._n - n0) / (time.time() - t0))
+                            (self._n - n0) / elapsed)
                 t0, n0 = time.time(), self._n
 
 
@@ -366,6 +484,8 @@ class Runtime:
         if isinstance(getattr(cfg, "server", None), dict):
             quality = int(cfg.server.get("jpeg_quality", 80))
         self.store = _default_store(cfg)
+        self.night_store = _default_night_store(cfg)
+        self.night_archive = _default_night_archive(cfg)
         self.workers = {}
         for cam in cfg.cameras or []:
             if not getattr(cam, "enabled", True):
@@ -373,7 +493,9 @@ class Runtime:
             self.workers[cam.id] = CameraWorker(
                 cam, self.scheduler, self.reporter, quality, evidence=evidence,
                 clock=self.clock, day_factory=day_factory,
-                night_factory=night_factory, store=self.store)
+                night_factory=night_factory, store=self.store,
+                night_store=self.night_store,
+                night_archive=self.night_archive)
         self._stop = threading.Event()
         self._thread = None
 
@@ -388,7 +510,14 @@ class Runtime:
     def stop(self):
         self._stop.set()
         for w in self.workers.values():
+            try:
+                w.flush_night()
+            except Exception:
+                logger.exception("night flush 失败")
+        for w in self.workers.values():
             w.stop()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=PUMP_INTERVAL_S * 4)
         try:
             self.reporter.close()
         except Exception:

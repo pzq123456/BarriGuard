@@ -179,6 +179,12 @@ class Scheduler:
             if self._state == ScheduleState.NIGHT:
                 # 启动时已在夜间：通知 Runtime 加入/新建本夜 session。
                 return [RuntimeEvent(RuntimeEventType.NIGHT_START, now)]
+            if self._state == ScheduleState.FROZEN:
+                # 采样已停、finalize 未到：补建并立即冻结，保证 07:00 能出图。
+                return [
+                    RuntimeEvent(RuntimeEventType.NIGHT_START, now),
+                    RuntimeEvent(RuntimeEventType.NIGHT_FREEZE, now),
+                ]
             return []
 
         prev = self._last_wall

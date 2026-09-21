@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from .algo import Event, Report  # noqa: F401  (Report/Event 契约复用)
+from .alarms import AlarmStore
 from .contracts import RuntimeConfig, WaterGapSpec
 
 _DEFAULT_ALARM_MIN_INTERVAL_S = 3600.0
@@ -88,6 +89,9 @@ class Reporter:
             or _DEFAULT_IMAGE_FIELD
         self._enabled = bool(cb.enabled and self._url)
 
+        out = str(getattr(cfg, "output_dir", "") or "").strip()
+        self._alarms = AlarmStore(out)
+
         queue_size = max(1, int(cb.queue_size))
         self._q = queue.Queue(maxsize=queue_size)
 
@@ -125,9 +129,28 @@ class Reporter:
             return
         self._enqueue(("report", report, None))
 
-    def submit_event(self, event, image_jpeg: bytes | None = None) -> None:
-        """入队一条告警 Event（只推 alarm），可附当前帧 JPEG。"""
+    def submit_status(self, camera_id, status, detail=None,
+                      image_jpeg: bytes | None = None) -> None:
+        """推一条相机状态（断流/恢复）；不参与 alarm 节流。"""
         if not self._enabled or self._closed:
+            return
+        out = {
+            "alert_type": "camera_status",
+            "camera_id": camera_id,
+            "camera_name": self._camera_name.get(camera_id, camera_id),
+            "timestamp": _utc_iso(),
+            "kind": "status",
+            "status": status,
+            "metadata": detail or {},
+            self._image_field: (base64.b64encode(image_jpeg).decode("ascii")
+                                if image_jpeg else ""),
+        }
+        body = json.dumps(out, ensure_ascii=False, default=str).encode("utf-8")
+        self._enqueue(("raw", body, None))
+
+    def submit_event(self, event, image_jpeg: bytes | None = None) -> None:
+        """先落盘再入队 alarm；落盘成功即 accepted（节流据此记账）。"""
+        if self._closed:
             return
         if getattr(event, "kind", None) != "alarm":
             return
@@ -139,8 +162,24 @@ class Reporter:
         with self._lock:
             if now - self._last.get(key, 0.0) < interval:
                 return
+        self._persist_alarm(event, image_jpeg)
+        with self._lock:
             self._last[key] = now
+        if not self._enabled:
+            return
         self._enqueue(("event", event, image_jpeg))
+
+    def _persist_alarm(self, event, image_jpeg) -> str | None:
+        """本机持久副本；消费端不可达时告警帧仍在磁盘上。"""
+        if not self._alarms.enabled:
+            return None
+        try:
+            return self._alarms.save(
+                getattr(event, "camera_id", ""), getattr(event, "algo", ""),
+                _target(event), getattr(event, "payload", None), image_jpeg)
+        except Exception:
+            logger.exception("[reporter] 告警帧落盘失败")
+            return None
 
     def close(self) -> None:
         """停止后台线程；幂等，最多等待 ``_CLOSE_JOIN_TIMEOUT_S``。"""
@@ -195,7 +234,7 @@ class Reporter:
 
     def _send(self, item) -> None:
         kind, payload, image = item
-        body = self._body(kind, payload, image)
+        body = payload if kind == "raw" else self._body(kind, payload, image)
         if body is None:
             return
         req = urllib.request.Request(
@@ -208,7 +247,7 @@ class Reporter:
                            kind, type(e).__name__, e)
 
     def _body(self, kind, obj, image) -> bytes | None:
-        """最简统一 payload：alert_type + camera + UTC timestamp + frame_base64。"""
+        """统一 payload：身份 + 时间 + 图片，外加业务字段（告警/报告各自完整）。"""
         if kind == "report":
             alert_type = _report_alert_type(getattr(obj, "report_type", ""))
             camera_id = getattr(obj, "camera", "")
@@ -227,7 +266,33 @@ class Reporter:
             "timestamp": ts,
             self._image_field: base64.b64encode(image).decode("ascii") if image else "",
         }
+        out.update(self._business_fields(kind, obj))
         return json.dumps(out, ensure_ascii=False, default=str).encode("utf-8")
+
+    @staticmethod
+    def _business_fields(kind, obj) -> dict:
+        """补全业务字段：报告带 status/metadata，告警带目标/框/置信度。"""
+        if kind == "report":
+            return {
+                "report_type": getattr(obj, "report_type", ""),
+                "algorithm": getattr(obj, "algorithm", ""),
+                "status": getattr(obj, "status", ""),
+                "metadata": getattr(obj, "metadata", {}) or {},
+            }
+        payload = getattr(obj, "payload", None) or {}
+        box = _bbox(obj)
+        return {
+            "kind": getattr(obj, "kind", ""),
+            "algo": getattr(obj, "algo", ""),
+            "target": _target(obj),
+            "bbox": box,
+            "objects": ([{
+                "class": getattr(obj, "algo", ""),
+                "confidence": payload.get("rer", payload.get("swing", 0.0)),
+                "bbox": box,
+            }] if box else []),
+            "metadata": payload,
+        }
 
 
 # =============================================================================

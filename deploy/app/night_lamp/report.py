@@ -49,6 +49,7 @@ M_LAG_FRAMES = "lag_frames"
 M_PERIOD_STEP = "period_step"
 M_BURST = "burst"
 M_ADAPTER = "adapter"
+M_RESTORED = "restored"
 
 IMAGE_MODE_NIGHT = "night"
 IMAGE_MODE_DAY = "day_overlay"

@@ -1,0 +1,97 @@
+# =============================================================================
+# BarriGuard 本机运行配置（非 Docker）。仅覆盖回调地址，其余与生产 config.yaml 一致。
+# 与 Docker 版本的唯一差异：回调不走 host.docker.internal，而走本机接口服务。
+# =============================================================================
+version: 1
+
+runtime:
+  host: "0.0.0.0"
+  port: 8000
+  jpeg_quality: 80
+  log_level: "warning"
+  memory_budget_mb_per_camera: 500
+  output_dir: "data"
+
+schedule:
+  timezone: "Asia/Shanghai"
+  day_start: "07:00"
+  day_end: "17:00"
+  night_start: "20:00"
+  night_end: "03:00"
+  report_at: "07:00"
+
+callback:
+  enabled: true
+  url: "http://127.0.0.1:998/alert"
+  timeout_s: 8
+  queue_size: 64
+  image_field: "frame_base64"
+
+cameras:
+  - id: "1749"
+    name: "Mobile Camera 1749"
+    rtsp_url: "rtsp://118.140.234.166:8554/dahua1002490"
+    enabled: true
+    algorithms:
+      water_gap:
+        enabled: true
+        schedule: day
+        calibration: "water_barrier/configs/1749.yaml"
+        status: ready
+        report_interval_s: 3600
+        alarm_min_interval_s: 3600
+        confidence: 0.25
+        alarm_hold_s: 10.0
+        reconfirm_s: 5.0
+        detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+                 floor_max: 0.24, core_exit: 0.06, min_width: 40, core_min_width: 30}
+        track: {decay_rate: 0.5, track_stale_s: 8.0, match_iou: 0.25,
+                match_center_ratio: 0.5, median_window: 5, intact_reset_s: 5.0,
+                rer_purity: 0.70, patch_size: 8}
+
+      night_lamp:
+        enabled: true
+        schedule: night
+        status: ready
+        night_gate: {enter_threshold: 100.0, exit_threshold: 120.0, persistence: 2}
+        sampling: {interval_ms: 160}
+        memory: {max_candidates: 200, series_cap: null}
+        baseline: {frames: 60, warmup_s: 600}
+        periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
+                      peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
+        alignment: {min_cc: 0.5, on_low_cc: degraded}
+        overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}
+
+  - id: "1750"
+    name: "Mobile Camera 1750"
+    rtsp_url: "rtsp://118.140.234.166:8554/dahua1002491"
+    enabled: true
+    algorithms:
+      water_gap:
+        enabled: true
+        schedule: day
+        calibration: "water_barrier/configs/1750.yaml"
+        status: calibration_pending
+        report_interval_s: 3600
+        alarm_min_interval_s: 3600
+        confidence: 0.50
+        alarm_hold_s: 10.0
+        reconfirm_s: 5.0
+        detect: {trim: 0.04, conf_th: 0.30, support_th: 0.3, min_box_width: 30,
+                 floor_max: 0.18, core_exit: 0.06, min_width: 40, core_min_width: 30}
+        track: {decay_rate: 0.5, track_stale_s: 8.0, match_iou: 0.25,
+                match_center_ratio: 0.5, median_window: 5, intact_reset_s: 5.0,
+                rer_purity: 0.70, patch_size: 8}
+
+      night_lamp:
+        enabled: true
+        schedule: night
+        status: calibration_pending
+        night_gate: {enter_threshold: 140.0, exit_threshold: 150.0, persistence: 2}
+        sampling: {interval_ms: 160}
+        memory: {max_candidates: 200, series_cap: null}
+        baseline: {frames: 60, warmup_s: 600}
+        periodicity: {period_step: 2, lag_lo_s: 0.3, lag_hi_s: 7.0,
+                      peak_floor: 0.2, min_peaks: 3, gap_tol: 1, onset_min: 50}
+        alignment: {min_cc: 0.5, on_low_cc: degraded}
+        overnight: {enabled: true, cadence_minutes: 60, burst_seconds: 120}

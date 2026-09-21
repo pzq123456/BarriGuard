@@ -30,7 +30,10 @@ if _ROOT not in sys.path:
 from server.contracts import NightLampSpec  # noqa: E402
 
 from night_lamp import report as R  # noqa: E402
+from night_lamp.persist import night_key  # noqa: E402
 from night_lamp.session import NightSession  # noqa: E402
+
+_SAVE_INTERVAL_S = 600.0
 
 
 class NightAdapter:
@@ -58,9 +61,75 @@ class NightAdapter:
         self._dropped_interval = 0
         self._dropped_burst = 0
 
+        self._store = None
+        self._archive = None
+        self._night_key = None
+        self._last_save_mono = None
+        self._save_interval_s = _SAVE_INTERVAL_S
+        self._restored = False
+        self._camera_id = getattr(session, "camera_id", None)
+
     @property
     def emitted(self) -> int:
         return self._emitted
+
+    def attach_persistence(self, store) -> None:
+        """绑定夜间状态 store；store 为空或未启用时整体 no-op。"""
+        self._store = store if getattr(store, "enabled", False) else None
+
+    def attach_archive(self, archive) -> None:
+        """绑定 L1 归档；archive 为空或未启用时 no-op。"""
+        self._archive = archive if getattr(archive, "enabled", False) else None
+
+    def restore(self, ts_wall=None) -> bool:
+        """按本夜 key 恢复累计状态；成功则跳过预热继续累积。"""
+        if self._store is None:
+            return False
+        self._night_key = night_key(ts_wall or self._clock.wall())
+        state = self._store.load(self._camera_id, self._night_key)
+        if state is None:
+            return False
+        ok = self._session.load_state(state)
+        self._restored = bool(ok)
+        if ok:
+            logger.info("[night] 恢复 {} {} 累计: {} samples",
+                        self._camera_id, self._night_key,
+                        self._session.sample_count)
+        return self._restored
+
+    def save_state(self, ts_wall=None) -> bool:
+        """把当前累计原子落盘；无 store 或未预热则 no-op。"""
+        self._archive_now(ts_wall)
+        if self._store is None:
+            return False
+        if self._night_key is None:
+            self._night_key = night_key(ts_wall or self._clock.wall())
+        state = self._session.dump_state()
+        if state is None:
+            return False
+        return self._store.save(self._camera_id, self._night_key, state) is not None
+
+    def _archive_now(self, ts_wall=None) -> bool:
+        """L1 归档热力图核心数组；出图后仍保留，供离线复算。"""
+        if self._archive is None:
+            return False
+        if self._night_key is None:
+            self._night_key = night_key(ts_wall or self._clock.wall())
+        state = self._session.dump_state()
+        if state is None:
+            return False
+        now = ts_wall or self._clock.wall()
+        manifest = {
+            "camera_id": self._camera_id,
+            "night": self._night_key,
+            "updated_at": now.isoformat() if hasattr(now, "isoformat") else str(now),
+            "n_seen": int(self._session.sample_count),
+            "candidate_overflow": bool(self._session.candidate_overflow),
+            "restored": self._restored,
+            "bursts_done": self._bursts_done,
+        }
+        return self._archive.save(
+            self._camera_id, self._night_key, state, manifest) is not None
 
     def on_frame(self, frame_bgr, ts_wall, ts_mono) -> None:
         if self._released or self._frozen:
@@ -82,6 +151,7 @@ class NightAdapter:
                 return
         else:
             self._received += 1
+            self._maybe_periodic_save(now)
 
         if self._last_emit is not None and (now - self._last_emit) < self._interval_s:
             self._dropped_interval += 1
@@ -102,6 +172,19 @@ class NightAdapter:
         if rep is not None:
             rep.metadata[R.M_ADAPTER] = self.stats()
             self._pending.append(rep)
+        self.save_state(ts_wall)
+
+    def _maybe_periodic_save(self, now) -> None:
+        """连续(非 burst)模式下的定期快照，避免只在 freeze 时才落盘。"""
+        if self._store is None:
+            return
+        if self._last_save_mono is None:
+            self._last_save_mono = now
+            return
+        if now - self._last_save_mono < self._save_interval_s:
+            return
+        self._last_save_mono = now
+        self.save_state()
 
     def take_reports(self) -> list:
         """Drain burst reports produced since the last call (non-blocking)."""
@@ -121,6 +204,8 @@ class NightAdapter:
             "observations_dropped": self._dropped_interval + self._dropped_burst,
             "dropped_interval": self._dropped_interval,
             "dropped_burst": self._dropped_burst,
+            "restored": self._restored,
+            "persisted": self._store is not None,
         }
 
     def freeze(self) -> None:
@@ -132,11 +217,15 @@ class NightAdapter:
             # (the morning finalize still reports the accumulated spatial map).
             self._burst_active = False
         self._session.freeze()
+        self.save_state()
 
     def finalize(self, base_frame_bgr, ts_wall):
         rep = self._session.finalize(base_frame_bgr, ts_wall)
         if rep is not None:
             rep.metadata[R.M_ADAPTER] = self.stats()
+        self._archive_now(ts_wall)
+        if self._store is not None and self._night_key is not None:
+            self._store.clear(self._camera_id, self._night_key)
         return rep
 
     def release(self) -> None:

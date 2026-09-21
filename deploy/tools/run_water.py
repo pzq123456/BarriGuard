@@ -1,4 +1,4 @@
-"""拉真实 RTSP 跑水马，报警时把叠加图存到 output/。"""
+"""拉真实 RTSP 跑水马：定时存运行过程图到 output/water_run/，报警时另存告警帧。"""
 from __future__ import annotations
 
 import sys
@@ -17,8 +17,9 @@ from server import config, registry, render, worker  # noqa: E402
 from server.source import Reader  # noqa: E402
 
 
-def main(seconds=180.0, camera="1749"):
-    OUT.mkdir(exist_ok=True)
+def main(seconds=300.0, camera="1749", snap_every=45.0):
+    run_dir = OUT / "water_run"
+    run_dir.mkdir(parents=True, exist_ok=True)
     cfg = config.load_runtime(TOOLS.parent / "config.yaml")
     cam = next(c for c in cfg.cameras if c.id == camera)
     spec = cam.algorithms["water_gap"].spec
@@ -30,7 +31,7 @@ def main(seconds=180.0, camera="1749"):
     reader = Reader(cam.rtsp_url)
     reader.start()
     frame, t0 = None, time.time()
-    while frame is None and time.time() - t0 < 10:
+    while frame is None and time.time() - t0 < 15:
         frame = reader.read()
         if frame is None:
             time.sleep(0.05)
@@ -38,10 +39,11 @@ def main(seconds=180.0, camera="1749"):
         reader.stop()
         raise SystemExit("no frame from RTSP")
     algo = registry.create("water_gap", frame.shape, calib, cam.id)
+    print("frame shape", frame.shape)
 
     n = saved = 0
     t0 = time.time()
-    last_beat = 0.0
+    last_snap = 0.0
     try:
         while time.time() - t0 < seconds:
             f = reader.read()
@@ -54,27 +56,34 @@ def main(seconds=180.0, camera="1749"):
             vis = render.draw_annots(
                 render.overlay(f, mask) if mask is not None else f, res.annots)
             vis = render.draw_status(vis, res.debug.get("frame_status", "OK"))
-            events = [e for e in res.events if e.kind in ("alarm", "suspected")]
-            if events:
-                stamp = time.strftime("%Y%m%d_%H%M%S")
-                for e in events:
-                    p = OUT / ("water_%s_%s_%s.jpg"
+            elapsed = time.time() - t0
+            if elapsed - last_snap >= snap_every or last_snap == 0.0:
+                p = run_dir / ("%s_%s.jpg" % (camera,
+                                              time.strftime("%H%M%S")))
+                cv.imwrite(str(p), vis)
+                last_snap = elapsed
+                print("snap t=%.0fs frames=%d fps=%.1f -> %s"
+                      % (elapsed, n, n / max(elapsed, 0.1), p.name))
+            for e in res.events:
+                if e.kind in ("alarm", "suspected"):
+                    stamp = time.strftime("%Y%m%d_%H%M%S")
+                    q = OUT / ("water_%s_%s_%s.jpg"
                                % (stamp, e.kind, e.payload.get("row_id", "")))
-                    cv.imwrite(str(p), vis)
+                    cv.imwrite(str(q), vis)
                     saved += 1
-                    print("saved", p.name, "rer=", e.payload.get("rer"))
-            if time.time() - last_beat >= 30:
-                cv.imwrite(str(OUT / "water_latest.jpg"), vis)
-                last_beat = time.time()
+                    print("ALARM", e.kind, "row=", e.payload.get("row_id"),
+                          "rer=", e.payload.get("rer"), "->", q.name)
     finally:
         reader.stop()
-    print("frames=%d saved_alarms=%d latest=%s" % (n, saved, OUT / "water_latest.jpg"))
+    print("done frames=%d fps=%.1f alarm_images=%d snapshots=%s"
+          % (n, n / max(time.time() - t0, 0.1), saved, run_dir))
 
 
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seconds", type=float, default=180.0)
+    ap.add_argument("--seconds", type=float, default=300.0)
     ap.add_argument("--camera", default="1749")
+    ap.add_argument("--snap-every", type=float, default=45.0)
     a = ap.parse_args()
-    main(a.seconds, a.camera)
+    main(a.seconds, a.camera, a.snap_every)

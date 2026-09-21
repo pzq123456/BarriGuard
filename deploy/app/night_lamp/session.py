@@ -56,6 +56,7 @@ from server.contracts import AlignmentStatus, NightLampSpec  # noqa: E402
 
 from night_lamp import report as R  # noqa: E402
 from night_lamp.periodicity import ac_limited, clean_train, onsets_of  # noqa: E402
+from night_lamp.persist import STATE_VERSION as _STATE_VERSION  # noqa: E402
 from night_lamp.tools import nightly_map as nm  # noqa: E402
 
 
@@ -409,6 +410,7 @@ class NightSession:
         self._last_ts = None
         self._frozen = False
         self._released = False
+        self._restored = False
         self._dropped_after_freeze = 0
         self._init_gate(spec.night_gate)
 
@@ -442,6 +444,85 @@ class NightSession:
     @property
     def candidate_overflow(self) -> bool:
         return self._overflow_any or self._discovery.overflow
+
+    @property
+    def camera_id(self) -> str:
+        return self._camera_id
+
+    @property
+    def restored(self) -> bool:
+        return self._restored
+
+    def dump_state(self):
+        """序列化跨重启所需的累计状态；尚未完成预热时返回 None。"""
+        if not self._warm_done or self._base is None:
+            return None
+        return {
+            "version": _STATE_VERSION,
+            "base": self._base,
+            "bg": self._bg,
+            "on": self._on,
+            "peak": self._peak,
+            "detrend": np.float32(0.0 if self._detrend is None else self._detrend),
+            "n_seen": np.int64(self._n_seen),
+            "overflow_any": np.bool_(self._overflow_any),
+            "gate_state": self._gate_state,
+            "gate_count": np.int64(self._gate_count),
+            "gate_samples": np.int64(self._gate_samples),
+            "gate_transitions": np.int64(self._gate_transitions),
+            "gate_configured": np.bool_(self._gate_configured),
+            "gate_valid": np.bool_(self._gate_valid),
+            "gate_enter": np.float32(self._nan(self._gate_enter)),
+            "gate_exit": np.float32(self._nan(self._gate_exit)),
+            "gate_persistence": np.int64(self._gate_persistence),
+        }
+
+    def load_state(self, state) -> bool:
+        """从 dump_state 的快照恢复累计，跳过预热；时间态仍由本进程重建。"""
+        if not state or self._warm_done:
+            return False
+        try:
+            base = np.asarray(state["base"], np.float32)
+            bg = np.asarray(state["bg"], np.float32)
+            on = np.asarray(state["on"], np.float32)
+            peak = np.asarray(state["peak"], np.float32)
+        except Exception:
+            logger.exception("night load_state 解析失败")
+            return False
+        if base.ndim != 2 or base.size == 0:
+            return False
+        if not (bg.shape == base.shape == on.shape == peak.shape):
+            logger.warning("night load_state 形状不一致，忽略")
+            return False
+
+        self._h, self._w = int(base.shape[0]), int(base.shape[1])
+        self._mask = nm.osd_mask(self._h, self._w)
+        self._base, self._bg, self._on, self._peak = base, bg, on, peak
+        self._detrend = float(state["detrend"])
+        self._n_seen = int(state["n_seen"])
+        self._warm_done = True
+        self._warm_stack = None
+        self._warm_meds = None
+        self._overflow_any = bool(state["overflow_any"])
+        self._restore_gate(state)
+        self._restored = True
+        return True
+
+    def _restore_gate(self, state):
+        self._gate_state = str(state["gate_state"])
+        self._gate_count = int(state["gate_count"])
+        self._gate_samples = int(state["gate_samples"])
+        self._gate_transitions = int(state["gate_transitions"])
+        self._gate_configured = bool(state["gate_configured"])
+        self._gate_valid = bool(state["gate_valid"])
+        enter, exit_ = float(state["gate_enter"]), float(state["gate_exit"])
+        self._gate_enter = None if enter != enter else enter
+        self._gate_exit = None if exit_ != exit_ else exit_
+        self._gate_persistence = int(state["gate_persistence"])
+
+    @staticmethod
+    def _nan(value):
+        return np.nan if value is None else value
 
     def accumulate(self, frame_bgr, ts_mono: float) -> None:
         if self._released:
@@ -902,6 +983,7 @@ class NightSession:
             },
             R.M_MEMORY_MB: self._memory_estimate_mb(),
             R.M_BURST: self._burst_metadata(),
+            R.M_RESTORED: bool(self._restored),
         }
         meta.update(self._night_meta(night))
         return R.build_report(self._camera_id, created_at, jpeg, meta,

@@ -32,13 +32,48 @@ class Reader:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._proc = None
+        self._connected = False
+        self._started_mono = None
+        self._last_frame_mono = None
+        self._reconnects = 0
 
     def start(self):
+        self._started_mono = time.monotonic()
         self._thread.start()
 
     def stop(self):
         self._stop.set()
         self._kill_proc()
+        self.join()
+
+    def join(self, timeout: float = 5.0):
+        """等采集线程收敛；用于优雅停机，不阻塞在已死线程上。"""
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout)
+
+    def health(self) -> dict:
+        """拉流健康快照；Worker 据此判定断流/恢复。"""
+        with self._lock:
+            last = self._last_frame_mono
+            return {
+                "connected": self._connected,
+                "started_mono": self._started_mono,
+                "last_frame_mono": last,
+                "seconds_since_frame": (None if last is None
+                                        else time.monotonic() - last),
+                "reconnects": self._reconnects,
+            }
+
+    def _mark_frame(self):
+        with self._lock:
+            self._last_frame_mono = time.monotonic()
+            self._connected = True
+
+    def _mark_connected(self, value: bool):
+        with self._lock:
+            self._connected = value
+            if not value:
+                self._reconnects += 1
 
     def read(self):
         """最新帧，无帧返回 None。调用方持副本，线程安全。"""
@@ -142,6 +177,7 @@ class Reader:
                 time.sleep(RETRY_WAIT_S)
                 continue
             logger.info("rtsp 已连接(ffmpeg 管道 {}x{}): {}", w, h, self._url)
+            self._mark_connected(True)
             size = w * h * 3
             while not self._stop.is_set():
                 raw = self._read_exact(size)
@@ -151,10 +187,13 @@ class Reader:
                 with self._lock:
                     self._frame = frame
                     self._seq += 1
+                    self._last_frame_mono = time.monotonic()
+                    self._connected = True
             rc = self._proc.poll() if self._proc else None
             self._kill_proc()
             if self._stop.is_set():
                 break
+            self._mark_connected(False)
             logger.warning("rtsp 断流(rc={})，{}s 后重连", rc, RETRY_WAIT_S)
             time.sleep(RETRY_WAIT_S)
 
@@ -170,6 +209,7 @@ class Reader:
                 time.sleep(RETRY_WAIT_S)
                 continue
             logger.info("rtsp 已连接(cv2): {}", self._url)
+            self._mark_connected(True)
             while not self._stop.is_set():
                 ok, frame = cap.read()
                 if not ok:
@@ -178,5 +218,8 @@ class Reader:
                 with self._lock:
                     self._frame = frame
                     self._seq += 1
+                    self._last_frame_mono = time.monotonic()
+                    self._connected = True
             cap.release()
+            self._mark_connected(False)
             time.sleep(RETRY_WAIT_S)
