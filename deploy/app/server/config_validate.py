@@ -53,7 +53,7 @@ TOP_REQUIRED = ("version", "runtime", "schedule", "callback", "cameras")
 
 RUNTIME_KEYS = {
     "host", "port", "jpeg_quality", "log_level", "memory_budget_mb_per_camera",
-    "output_dir",
+    "output_dir", "alarm_dir",
 }
 RUNTIME_REQUIRED = ("host", "port")
 
@@ -203,6 +203,8 @@ def _parse_runtime(d, where):
         server["log_level"] = _as_str(d["log_level"], f"{where}.log_level")
     if "output_dir" in d:
         server["output_dir"] = _as_str(d["output_dir"], f"{where}.output_dir")
+    if "alarm_dir" in d:
+        server["alarm_dir"] = _as_str(d["alarm_dir"], f"{where}.alarm_dir")
     mem = None
     if "memory_budget_mb_per_camera" in d:  # manifest-only, optional
         mem = _as_int(
@@ -392,6 +394,7 @@ def parse_runtime(data, base_dir, source="<config>"):
         cameras=cameras,
         server=server,
         output_dir=server.get("output_dir", ""),
+        alarm_dir=server.get("alarm_dir", ""),
     )
     if mem is not None:
         kwargs["memory_budget_mb_per_camera"] = mem

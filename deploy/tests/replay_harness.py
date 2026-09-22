@@ -651,7 +651,9 @@ FROZEN_SIGNATURES = {
     ],
     "night_lamp.adapter": [
         ("NightAdapter.__init__", ["self", "session", "spec", "clock"]),
-        ("NightAdapter.on_frame", ["self", "frame_bgr", "ts_wall", "ts_mono"]),
+        ("NightAdapter.on_frame", ["self", "frame_bgr", "ts_wall", "ts_mono",
+                                   "frame_id"]),
+        ("NightAdapter.tick", ["self", "ts_wall"]),
         ("NightAdapter.freeze", ["self"]),
         ("NightAdapter.finalize", ["self", "base_frame_bgr", "ts_wall"]),
         ("NightAdapter.release", ["self"]),

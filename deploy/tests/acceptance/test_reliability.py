@@ -201,17 +201,8 @@ class _HealthReader:
         }
 
 
-class _StatusReporter(H.NullReporter):
-    def __init__(self):
-        super().__init__()
-        self.statuses = []
-
-    def submit_status(self, camera_id, status, detail=None, image_jpeg=None):
-        self.statuses.append((camera_id, status))
-
-
 def stream_health_alert(ctx=H.Context()):
-    """持续无帧超阈值 -> stream_lost；恢复 -> stream_restored。"""
+    """持续无帧超阈值 -> 内部状态 STREAM_LOST；恢复 -> OK（不再对外推 camera_status）。"""
     import server.worker as W
     from server.contracts import CameraSpec
     from server.schedule import FakeClock, Scheduler
@@ -223,28 +214,24 @@ def stream_health_alert(ctx=H.Context()):
         clock = FakeClock(datetime(2026, 9, 18, 19, 59, tzinfo=TZ))
         cam = CameraSpec(id="cam", name="cam", rtsp_url="fake://x",
                          algorithms={})
-        reporter = _StatusReporter()
+        reporter = H.NullReporter()
         worker = W.CameraWorker(cam, Scheduler(cfg, clock), reporter)
 
         worker._check_stream_health(5.0)
-        if reporter.statuses:
+        if worker.status() != "OK":
             raise AssertionError("false stream_lost before threshold")
         worker._check_stream_health(11.0)
-        if not reporter.statuses or reporter.statuses[-1][1] != "stream_lost":
-            raise AssertionError(f"missing stream_lost: {reporter.statuses}")
         if worker.status() != "STREAM_LOST":
             raise AssertionError(f"status={worker.status()}")
 
         worker._reader.connected = True
         worker._reader.last_frame_mono = 12.0
         worker._check_stream_health(12.0)
-        if reporter.statuses[-1][1] != "stream_restored":
-            raise AssertionError(f"missing stream_restored: {reporter.statuses}")
         if worker.status() != "OK":
             raise AssertionError(f"status={worker.status()}")
     finally:
         W.Reader = original
-    return "stream_lost/restored emitted"
+    return "stream status tracked internally"
 
 
 def payload_contract(ctx=H.Context()):

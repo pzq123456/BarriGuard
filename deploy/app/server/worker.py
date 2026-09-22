@@ -211,6 +211,22 @@ class CameraWorker:
         except Exception:
             logger.exception("[{}] report submit 失败", self.id)
 
+    def _tick_night(self, now_wall):
+        """墙钟推进所有夜间适配器并发布其结算的桶报告（断流时也调用）。"""
+        with self._lock:
+            adapters = list(self._night.items())
+        for name, ad in adapters:
+            if not self._scheduler.is_active(self.id, name):
+                continue
+            tick = getattr(ad, "tick", None)
+            if callable(tick):
+                try:
+                    tick(now_wall)
+                except Exception:
+                    logger.exception("[{}] night tick 失败: {}", self.id, name)
+            for rep in self._take_night_reports(ad):
+                self.publish(rep)
+
     @staticmethod
     def _take_night_reports(adapter) -> list:
         take = getattr(adapter, "take_reports", None)
@@ -302,16 +318,7 @@ class CameraWorker:
             self._status = status
 
     def _emit_status(self, status: str, health: dict):
-        detail = {
-            "reconnects": health.get("reconnects"),
-            "seconds_since_frame": health.get("seconds_since_frame"),
-        }
-        submit = getattr(self._reporter, "submit_status", None)
-        if callable(submit):
-            try:
-                submit(self.id, status, detail=detail)
-            except Exception:
-                logger.exception("[{}] 状态上报失败: {}", self.id, status)
+        # 仅保留内部可观测（/events 与画面角标）；不对外推送 camera_status。
         with self._lock:
             self._events.append({"ts": datetime.now().astimezone().isoformat(),
                                  "algo": "stream", "kind": "status",
@@ -390,13 +397,17 @@ class CameraWorker:
         while not self._stop.is_set():
             frame = self._reader.read()
             self._check_stream_health(self._clock.monotonic())
+            now_wall = self._clock.wall()
+            now_mono = self._clock.monotonic()
+            _seq_fn = getattr(self._reader, "seq", None)
+            frame_id = _seq_fn() if callable(_seq_fn) else None
+            # 墙钟 tick：与是否有帧无关，保证断流时桶仍能按整点结算出图。
+            self._tick_night(now_wall)
             if frame is None:
                 time.sleep(0.05)
                 continue
             if not self._built:
                 self._build(frame.shape)
-            now_wall = self._clock.wall()
-            now_mono = self._clock.monotonic()
             self._latest_frame = frame
 
             annots, debug, events = [], {}, []
@@ -427,7 +438,7 @@ class CameraWorker:
                 if not self._scheduler.is_active(self.id, name):
                     continue
                 try:
-                    ad.on_frame(frame, now_wall, now_mono)
+                    ad.on_frame(frame, now_wall, now_mono, frame_id=frame_id)
                 except Exception:
                     logger.exception("[{}] night on_frame 失败: {}", self.id, name)
                     continue

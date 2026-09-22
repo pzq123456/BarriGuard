@@ -51,7 +51,7 @@ Get-NetTCPConnection -State Listen -EA SilentlyContinue | ? { $_.LocalPort -in 8
 
 - 07:00–17:00 白昼：水马每小时出图。
 - 20:00–03:00 夜间：每小时出 burst 热力图；**07:00 出整夜最终热力图**。
-- 夜图可能 `status=degraded`（候选溢出，属已知项）。
+- 夜图 `status` 由底图对齐质量决定（对齐差才 `degraded`）；光斑数量只记入 metadata，不影响 status。
 
 ## 停止
 

@@ -89,7 +89,8 @@ class Reporter:
             or _DEFAULT_IMAGE_FIELD
         self._enabled = bool(cb.enabled and self._url)
 
-        out = str(getattr(cfg, "output_dir", "") or "").strip()
+        out = str(getattr(cfg, "alarm_dir", "") or "").strip() or \
+            str(getattr(cfg, "output_dir", "") or "").strip()
         self._alarms = AlarmStore(out)
 
         queue_size = max(1, int(cb.queue_size))
@@ -128,25 +129,6 @@ class Reporter:
         if not self._enabled or self._closed:
             return
         self._enqueue(("report", report, None))
-
-    def submit_status(self, camera_id, status, detail=None,
-                      image_jpeg: bytes | None = None) -> None:
-        """推一条相机状态（断流/恢复）；不参与 alarm 节流。"""
-        if not self._enabled or self._closed:
-            return
-        out = {
-            "alert_type": "camera_status",
-            "camera_id": camera_id,
-            "camera_name": self._camera_name.get(camera_id, camera_id),
-            "timestamp": _utc_iso(),
-            "kind": "status",
-            "status": status,
-            "metadata": detail or {},
-            self._image_field: (base64.b64encode(image_jpeg).decode("ascii")
-                                if image_jpeg else ""),
-        }
-        body = json.dumps(out, ensure_ascii=False, default=str).encode("utf-8")
-        self._enqueue(("raw", body, None))
 
     def submit_event(self, event, image_jpeg: bytes | None = None) -> None:
         """先落盘再入队 alarm；落盘成功即 accepted（节流据此记账）。"""

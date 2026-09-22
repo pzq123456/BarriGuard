@@ -80,6 +80,11 @@ class Reader:
         with self._lock:
             return None if self._frame is None else self._frame.copy()
 
+    def seq(self) -> int:
+        """当前帧序号；无新帧时 read() 会重复返回同一帧，据此去重。"""
+        with self._lock:
+            return self._seq
+
     def burst_next(self, n: int, timeout_s: float = 30.0):
         """收集 n 帧新帧 (按 seq 去重)；超时抛 TimeoutError (night_lamp burst 用)。"""
         out, t0 = [], time.time()

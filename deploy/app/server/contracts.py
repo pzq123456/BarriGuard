@@ -124,7 +124,7 @@ class SamplingSpec:
 
 @dataclass
 class MemorySpec:
-    max_candidates: int = 200         # 溢出 -> candidate_overflow/degraded，绝不静默取前 N
+    max_candidates: int = 200         # 跟踪容量上限（内存护栏），溢出记入 metadata，不影响 status
     series_cap: Optional[int] = None  # None = 全序列（受 max_candidates 约束）；
     #                                   600 仅为 benchmark 候选，禁止作 production 默认
 
@@ -157,10 +157,16 @@ class OvernightSpec:
     """夜间 burst 调度：每小时一段连续 burst，空间累计跨 burst 保留。
 
     enabled=False 时退回旧的“整夜单一 NightSession”行为。
+
+    anchor:
+      * ``"stream"``（默认/旧行为）：burst 从「首帧」起用单调钟推进。
+      * ``"wall"``：由墙钟整点分桶驱动——每小时前 ``burst_seconds`` 观测，
+        桶末由独立的 tick（非 on_frame）触发结算并出图；断流也照常出图。
     """
     enabled: bool = False
     cadence_minutes: int = 60         # burst 间隔
     burst_seconds: int = 120          # 每段连续观测时长
+    anchor: str = "stream"            # stream | wall
 
 
 @dataclass
@@ -201,3 +207,4 @@ class RuntimeConfig:
     server: dict = field(default_factory=dict)       # host/port/jpeg_quality/...
     memory_budget_mb_per_camera: int = 500           # manifest-only, not consumed at runtime
     output_dir: str = ""                             # 空 = 不落盘；host-mounted root
+    alarm_dir: str = ""                              # 告警帧落盘根；空则回退 output_dir

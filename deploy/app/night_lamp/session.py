@@ -20,8 +20,10 @@ Design (and the online-vs-golden deltas this file makes explicit):
   the authoritative candidate components still come from
   ``nightly_map.split_comps(final duty)`` -- the online set is *never* used to
   prove equivalence, only to decide what to track.
-* ``max_candidates`` overflow sets ``candidate_overflow`` (never silent) and
-  is surfaced as ``Report.status == "degraded"``.
+* ``max_candidates`` overflow sets ``candidate_overflow`` in metadata (never
+  silent) but does *not* gate ``Report.status``: the rendered heatmap comes
+  from the full-frame duty accumulator, so the number of light spots in the
+  scene is not a quality verdict on the output.
 * ``series_cap is None`` keeps the full sequence (production default).
   A non-None cap keeps only the tail window and is marked experimental.
 * Overnight burst mode (``spec.overnight.enabled``): ``begin_burst`` resets the
@@ -658,15 +660,17 @@ class NightSession:
         self._burst_started_wall = ts_wall
         self._burst_ended_wall = None
 
-    def snapshot(self, ts_wall) -> "R.Report | None":
+    def snapshot(self, ts_wall, force: bool = False) -> "R.Report | None":
         """Burst-end cumulative heatmap; does not freeze or release.
 
         Returns ``None`` when the burst added no observations since the last
-        snapshot, so a silent hour does not emit a duplicate report.
+        snapshot, so a silent hour does not emit a duplicate report.  ``force``
+        bypasses that guard so a wall-clock bucket can still emit a (possibly
+        silent) bucket report; it never fabricates observations.
         """
         if self._released:
             raise RuntimeError("NightSession is released")
-        if self._n_seen <= self._last_snapshot_n:
+        if not force and self._n_seen <= self._last_snapshot_n:
             return None
         if not self._warm_done and self._n_seen > 0:
             self._finish_warmup()
@@ -944,8 +948,7 @@ class NightSession:
                               [int(cv.IMWRITE_JPEG_QUALITY), R.JPEG_QUALITY])
         jpeg = buf.tobytes() if ok else None
 
-        status = R.STATUS_DEGRADED if overflow else R.STATUS_OK
-        status = R.status_for_alignment(status, alignment_status)
+        status = R.status_for_alignment(R.STATUS_OK, alignment_status)
 
         meta = {
             R.M_ALIGNMENT: alignment_status.value,

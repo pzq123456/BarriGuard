@@ -15,8 +15,9 @@ import argparse
 import base64
 import json
 import sys
+import threading
 from datetime import datetime, timezone
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 from loguru import logger
@@ -26,6 +27,9 @@ from loguru import logger
 _receive_count = 0
 _save_dir: Path | None = None
 _payload_log: Path | None = None
+_log_only = False          # 只记 payload.jsonl，不落帧（帧的唯一来源交给服务端）
+# 并发回调（两路相机整点/07:00 同时上报）下保护计数器与 JSONL 追加
+_lock = threading.Lock()
 
 
 # ── Handler ──────────────────────────────────────────────────────────────
@@ -47,8 +51,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._respond(400, {"error": "Invalid JSON"})
             return
 
-        _receive_count += 1
-        count = _receive_count
+        with _lock:
+            _receive_count += 1
+            count = _receive_count
 
         # 立即响应，避免磁盘 I/O / 日志输出阻塞发送端
         self._respond(200, {"status": "ok", "received": count})
@@ -59,7 +64,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         #    兼容两种字段名：旧 frame_base64 / 新 Reporter 的 image_base64
         frame_saved_to = None
         frame_b64 = payload.pop("frame_base64", None) or payload.pop("image_base64", None)
-        if _save_dir:
+        if _save_dir and not _log_only:
             try:
                 camera_id = payload.get("camera_id", "unknown")
                 ts = (payload.get("timestamp") or payload.get("created_at")
@@ -91,8 +96,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 **payload,
                 "frame_saved_to": frame_saved_to,
             }
-            with open(_payload_log, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            with _lock:
+                with open(_payload_log, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
         # 3. 控制台摘要（通过 logger，无阻塞 flush）
         self._log_summary(count, payload, frame_saved_to)
@@ -132,15 +138,18 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 # ── 入口 ──────────────────────────────────────────────────────────────────
 def main():
-    global _save_dir, _payload_log
+    global _save_dir, _payload_log, _log_only
 
     parser = argparse.ArgumentParser(description="Webhook 接收器")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", "-p", type=int, default=9999)
     parser.add_argument("--save-dir",
                         default=str(Path(__file__).resolve().parent / "output"))
+    parser.add_argument("--log-only", action="store_true",
+                        help="只记 payload.jsonl，不落帧（帧统一由服务端落盘）")
     args = parser.parse_args()
 
+    _log_only = bool(args.log_only)
     _save_dir = Path(args.save_dir)
     _save_dir.mkdir(parents=True, exist_ok=True)
     _payload_log = _save_dir / "payload.jsonl"
@@ -150,7 +159,7 @@ def main():
     logger.add(sys.stderr, level="DEBUG", colorize=True,
                format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
 
-    server = HTTPServer((args.host, args.port), WebhookHandler)
+    server = ThreadingHTTPServer((args.host, args.port), WebhookHandler)
     logger.info("Receiver 启动 — {}:{}, 目录 {}", args.host, args.port, args.save_dir)
 
     try:
