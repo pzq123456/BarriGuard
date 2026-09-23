@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir \
     "loguru==0.7.3" \
     "numpy==2.5.2" \
     "opencv-python-headless==5.0.0.93" \
-    "pyyaml==6.0.3"
+    "pyyaml==6.0.3" \
+    "tzdata==2026.4"
 
 # 自包含生产世界：上下文内 app/ 即容器内 /app（包名不变）。
 COPY app/ /app/
