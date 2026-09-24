@@ -56,7 +56,16 @@ def _default_store(cfg):
     if not out:
         return None
     from .output import ReportStore
-    return ReportStore(out)
+    return ReportStore(out, persist_images=bool(
+        getattr(cfg, "persist_images", True)))
+
+
+def _default_sweeper(cfg):
+    """按 retention_hours 定时清理落盘目录；<=0 或无可清目录时 no-op。"""
+    from .maintenance import Sweeper
+    hours = float(getattr(cfg, "retention_hours", 0.0) or 0.0)
+    roots = (getattr(cfg, "output_dir", ""), getattr(cfg, "alarm_dir", ""))
+    return Sweeper(roots, hours)
 
 
 def _default_night_store(cfg):
@@ -497,6 +506,7 @@ class Runtime:
         self.store = _default_store(cfg)
         self.night_store = _default_night_store(cfg)
         self.night_archive = _default_night_archive(cfg)
+        self.sweeper = _default_sweeper(cfg)
         self.workers = {}
         for cam in cfg.cameras or []:
             if not getattr(cam, "enabled", True):
@@ -513,6 +523,7 @@ class Runtime:
     def start(self):
         for w in self.workers.values():
             w.start()
+        self.sweeper.start()
         self._thread = threading.Thread(target=self._pump, daemon=True,
                                         name="runtime-pump")
         self._thread.start()
@@ -520,6 +531,7 @@ class Runtime:
 
     def stop(self):
         self._stop.set()
+        self.sweeper.stop()
         for w in self.workers.values():
             try:
                 w.flush_night()

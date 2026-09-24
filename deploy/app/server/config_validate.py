@@ -53,7 +53,7 @@ TOP_REQUIRED = ("version", "runtime", "schedule", "callback", "cameras")
 
 RUNTIME_KEYS = {
     "host", "port", "jpeg_quality", "log_level", "memory_budget_mb_per_camera",
-    "output_dir", "alarm_dir",
+    "output_dir", "alarm_dir", "persist_images", "retention_hours",
 }
 RUNTIME_REQUIRED = ("host", "port")
 
@@ -63,7 +63,7 @@ SCHEDULE_KEYS = {
 SCHEDULE_REQUIRED = tuple(SCHEDULE_KEYS)
 TIME_KEYS = ("day_start", "day_end", "night_start", "night_end", "report_at")
 
-CALLBACK_KEYS = {"enabled", "url", "timeout_s", "queue_size", "image_field"}
+CALLBACK_KEYS = {"enabled", "url", "timeout_s", "queue_size", "image_field", "retries"}
 CALLBACK_REQUIRED = ("enabled", "url")
 
 CAMERA_KEYS = {"id", "name", "rtsp_url", "enabled", "algorithms"}
@@ -205,6 +205,12 @@ def _parse_runtime(d, where):
         server["output_dir"] = _as_str(d["output_dir"], f"{where}.output_dir")
     if "alarm_dir" in d:
         server["alarm_dir"] = _as_str(d["alarm_dir"], f"{where}.alarm_dir")
+    if "persist_images" in d:
+        server["persist_images"] = _as_bool(
+            d["persist_images"], f"{where}.persist_images")
+    if "retention_hours" in d:
+        server["retention_hours"] = _as_float(
+            d["retention_hours"], f"{where}.retention_hours", minimum=0.0)
     mem = None
     if "memory_budget_mb_per_camera" in d:  # manifest-only, optional
         mem = _as_int(
@@ -245,6 +251,8 @@ def _parse_callback(d, where):
         kwargs["queue_size"] = _as_int(d["queue_size"], f"{where}.queue_size", minimum=1)
     if "image_field" in d:
         kwargs["image_field"] = _as_str(d["image_field"], f"{where}.image_field")
+    if "retries" in d:
+        kwargs["retries"] = _as_int(d["retries"], f"{where}.retries", minimum=0)
     return CallbackSpec(**kwargs)
 
 
@@ -395,6 +403,8 @@ def parse_runtime(data, base_dir, source="<config>"):
         server=server,
         output_dir=server.get("output_dir", ""),
         alarm_dir=server.get("alarm_dir", ""),
+        persist_images=bool(server.get("persist_images", True)),
+        retention_hours=float(server.get("retention_hours", 0.0)),
     )
     if mem is not None:
         kwargs["memory_budget_mb_per_camera"] = mem

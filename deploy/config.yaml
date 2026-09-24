@@ -25,6 +25,8 @@ runtime:
   log_level: "warning"
   memory_budget_mb_per_camera: 500  # manifest-only, optional
   output_dir: "data"               # 落盘根目录；docker 挂载 ./data:/app/data
+  persist_images: false            # 不落图片，仅保留 JSON 交换格式
+  retention_hours: 48              # 定时清理：删除落盘中超过 48h 的文件
 
 schedule:
   timezone: "Asia/Shanghai"
@@ -36,8 +38,9 @@ schedule:
 
 callback:
   enabled: true
-  url: "http://host.docker.internal:9999/alert"
-  timeout_s: 8
+  url: "http://192.168.1.24:6034/protal/ai-alarm/webhook"
+  timeout_s: 10
+  retries: 2                      # 失败后额外重试次数
   queue_size: 64                  # 必须有界
   image_field: "frame_base64"
 

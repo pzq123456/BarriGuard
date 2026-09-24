@@ -28,6 +28,7 @@ from .contracts import RuntimeConfig, WaterGapSpec
 _DEFAULT_ALARM_MIN_INTERVAL_S = 3600.0
 _DEFAULT_IMAGE_FIELD = "image_base64"
 _CLOSE_JOIN_TIMEOUT_S = 5.0
+_RETRY_BACKOFF_S = 1.0
 
 
 def _now_iso() -> str:
@@ -91,7 +92,9 @@ class Reporter:
 
         out = str(getattr(cfg, "alarm_dir", "") or "").strip() or \
             str(getattr(cfg, "output_dir", "") or "").strip()
-        self._alarms = AlarmStore(out)
+        self._alarms = AlarmStore(
+            out, persist_images=bool(getattr(cfg, "persist_images", True)))
+        self._retries = max(int(getattr(cb, "retries", 0) or 0), 0)
 
         queue_size = max(1, int(cb.queue_size))
         self._q = queue.Queue(maxsize=queue_size)
@@ -221,12 +224,19 @@ class Reporter:
             return
         req = urllib.request.Request(
             self._url, data=body, headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as r:
-                logger.info("[reporter] {} -> {} {}", kind, self._url, r.status)
-        except Exception as e:
-            logger.warning("[reporter] 上报失败({}): {}: {}",
-                           kind, type(e).__name__, e)
+        for attempt in range(self._retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as r:
+                    logger.info("[reporter] {} -> {} {}", kind, self._url, r.status)
+                return
+            except Exception as e:
+                last = attempt >= self._retries
+                logger.warning("[reporter] 上报失败({}, 第{}/{}次): {}: {}",
+                               kind, attempt + 1, self._retries + 1,
+                               type(e).__name__, e)
+                if last:
+                    return
+                time.sleep(_RETRY_BACKOFF_S)
 
     def _body(self, kind, obj, image) -> bytes | None:
         """统一 payload：身份 + 时间 + 图片，外加业务字段（告警/报告各自完整）。"""

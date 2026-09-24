@@ -28,8 +28,9 @@ def _stamp(created_at) -> str:
 class ReportStore:
     """Write reports under ``root/<camera>/<camera>_<ts>_<type>_<status>.*``."""
 
-    def __init__(self, root):
+    def __init__(self, root, persist_images: bool = True):
         self._root = Path(root)
+        self._persist_images = bool(persist_images)
 
     @property
     def root(self) -> Path:
@@ -47,7 +48,7 @@ class ReportStore:
         jso = outdir / (base + ".json")
 
         image = getattr(report, "image_jpeg", None)
-        if image:
+        if image and self._persist_images:
             jpg.write_bytes(image)
         payload = {
             "camera": getattr(report, "camera", None),
@@ -55,7 +56,7 @@ class ReportStore:
             "report_type": getattr(report, "report_type", None),
             "created_at": getattr(report, "created_at", None),
             "status": getattr(report, "status", None),
-            "image": jpg.name if image else None,
+            "image": jpg.name if (image and self._persist_images) else None,
             "metadata": getattr(report, "metadata", {}) or {},
         }
         jso.write_text(json.dumps(payload, ensure_ascii=False, indent=2,

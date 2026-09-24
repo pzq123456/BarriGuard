@@ -24,9 +24,10 @@ def _safe(text, fallback: str) -> str:
 class AlarmStore:
     """把每条告警写成 ``<root>/alerts/<camera>/<ts>_<algo>_<target>.json/.jpg``。"""
 
-    def __init__(self, root):
+    def __init__(self, root, persist_images: bool = True):
         root = str(root or "").strip()
         self._root = (Path(root) / _ALARM_DIR) if root else None
+        self._persist_images = bool(persist_images)
 
     @property
     def enabled(self) -> bool:
@@ -43,15 +44,16 @@ class AlarmStore:
         stem = f"{ts.strftime('%Y%m%d_%H%M%S_%f')}_{_safe(algo, 'alarm')}_{_safe(target, 'na')}"
         jpg = outdir / f"{stem}.jpg"
         meta = outdir / f"{stem}.json"
+        write_image = bool(image_jpeg) and self._persist_images
         try:
-            if image_jpeg:
+            if write_image:
                 jpg.write_bytes(image_jpeg)
             record = {
                 "camera_id": camera_id,
                 "algo": algo,
                 "target": target,
                 "received_at": ts.isoformat(),
-                "frame": jpg.name if image_jpeg else None,
+                "frame": jpg.name if write_image else None,
                 **(payload or {}),
             }
             meta.write_text(

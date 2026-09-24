@@ -66,6 +66,7 @@ class CallbackSpec:
     queue_size: int = 64              # 必须有界，防止 callback 挂起导致内存泄漏
     image_field: str = "image_base64"
     enabled: bool = True
+    retries: int = 0                  # 失败后额外重试次数（0 = 不重试）
 
 
 @dataclass
@@ -208,3 +209,5 @@ class RuntimeConfig:
     memory_budget_mb_per_camera: int = 500           # manifest-only, not consumed at runtime
     output_dir: str = ""                             # 空 = 不落盘；host-mounted root
     alarm_dir: str = ""                              # 告警帧落盘根；空则回退 output_dir
+    persist_images: bool = True                      # False = 不落图片，仅保留交换格式(JSON)
+    retention_hours: float = 0.0                     # >0 时定时清理落盘目录中超过该时长的文件
