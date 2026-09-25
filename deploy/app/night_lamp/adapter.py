@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -59,6 +60,7 @@ class NightAdapter:
         self._burst_active = False
         self._bursts_done = 0
         self._pending: list = []
+        self._pending_lock = threading.Lock()
         self._received = 0
         self._dropped_interval = 0
         self._dropped_burst = 0
@@ -75,11 +77,12 @@ class NightAdapter:
         self._last_frame_id = None
         self._dropped_repeat = 0
         self._last_emitted_bucket = None
+        self._night_scheduled = 0
+        self._night_emitted = 0
         # 固定网格重采样：on_frame 只登记最新帧，采样由 tick 按 interval 网格完成。
         self._latest_frame = None
         self._latest_id = None
         self._grid_next = None
-        self._grid_mono = 0.0
 
         self._store = None
         self._archive = None
@@ -239,22 +242,21 @@ class NightAdapter:
             self._latest_frame = None
             self._latest_id = None          # 防止开窗首格误用上一桶的陈旧帧
             self._grid_next = start + timedelta(seconds=self._interval_s)
-            self._grid_mono = 0.0
             self._session.begin_burst(start)
         # 固定网格采样：每个网格点取"当前最新帧"，无新帧则跳过（真实空档）。
-        # 网格时间戳均匀递增 -> 周期性判据不再被到达抖动污染。
+        # 采样时间戳用连续 monotonic（跨桶不回绕），供基线 EMA 计算真实 dt。
         guard = 0
         while self._window_open and ts_wall >= self._grid_next and guard < 100000:
             guard += 1
             fid = self._latest_id
             has_new = ((fid is not None and fid != self._last_frame_id)
                        or (fid is None and self._latest_frame is not None))
-            self._grid_mono += self._interval_s
             if has_new:
                 self._last_frame_id = fid
                 self._emitted += 1
                 self._win_emitted += 1
-                self._session.accumulate(self._latest_frame, self._grid_mono)
+                self._session.accumulate(self._latest_frame,
+                                         self._clock.monotonic())
             else:
                 self._dropped_interval += 1
             self._grid_next = self._grid_next + timedelta(seconds=self._interval_s)
@@ -268,6 +270,7 @@ class NightAdapter:
         bid = self._bucket_id
         if bid is not None and bid == self._last_emitted_bucket:
             return  # 幂等：本桶已出图（重启后），不重复 publish
+        self._bursts_done += 1
         try:
             rep = self._session.snapshot(ts_wall, force=True)
         except Exception:
@@ -276,6 +279,8 @@ class NightAdapter:
         if rep is None:
             rep = self._bucket_fallback(ts_wall, bid)
         scheduled_steps = max(int(round(self._burst_s / self._interval_s)), 1)
+        self._night_scheduled += scheduled_steps
+        self._night_emitted += self._win_emitted
         md = rep.metadata
         md[R.M_ADAPTER] = self.stats()
         md["bucket"] = bid
@@ -285,7 +290,8 @@ class NightAdapter:
         md["unique_frames"] = int(self._win_emitted)
         md["coverage"] = round(self._win_emitted / float(scheduled_steps), 4)
         md["silent_bucket"] = (self._win_emitted == 0)
-        self._pending.append(rep)
+        with self._pending_lock:
+            self._pending.append(rep)
         self._last_emitted_bucket = bid
         self.save_state(ts_wall)
 
@@ -318,7 +324,8 @@ class NightAdapter:
             rep = None
         if rep is not None:
             rep.metadata[R.M_ADAPTER] = self.stats()
-            self._pending.append(rep)
+            with self._pending_lock:
+                self._pending.append(rep)
         self.save_state(ts_wall)
 
     def _maybe_periodic_save(self, now) -> None:
@@ -335,8 +342,9 @@ class NightAdapter:
 
     def take_reports(self) -> list:
         """Drain burst reports produced since the last call (non-blocking)."""
-        out = self._pending
-        self._pending = []
+        with self._pending_lock:
+            out = self._pending
+            self._pending = []
         return out
 
     def stats(self) -> dict:
@@ -359,6 +367,11 @@ class NightAdapter:
             "dropped_repeat": self._dropped_repeat,
             "restored": self._restored,
             "persisted": self._store is not None,
+            "night_scheduled": int(self._night_scheduled),
+            "night_emitted": int(self._night_emitted),
+            "night_coverage": (round(self._night_emitted
+                                     / float(self._night_scheduled), 4)
+                               if self._night_scheduled else None),
         }
 
     def freeze(self) -> None:
@@ -376,6 +389,9 @@ class NightAdapter:
         rep = self._session.finalize(base_frame_bgr, ts_wall)
         if rep is not None:
             rep.metadata[R.M_ADAPTER] = self.stats()
+            if self._night_scheduled:
+                rep.metadata["coverage"] = round(
+                    self._night_emitted / float(self._night_scheduled), 4)
         self._archive_now(ts_wall)
         if self._store is not None and self._night_key is not None:
             self._store.clear(self._camera_id, self._night_key)

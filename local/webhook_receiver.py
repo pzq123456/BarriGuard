@@ -16,6 +16,7 @@ import base64
 import json
 import sys
 import threading
+import urllib.request
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -28,11 +29,24 @@ _receive_count = 0
 _save_dir: Path | None = None
 _payload_log: Path | None = None
 _log_only = False          # 只记 payload.jsonl，不落帧（帧的唯一来源交给服务端）
+_forward_url: str | None = None   # 非空时把原始 body 转发给线上，保证线上不丢
 # 并发回调（两路相机整点/07:00 同时上报）下保护计数器与 JSONL 追加
 _lock = threading.Lock()
 
 
 # ── Handler ──────────────────────────────────────────────────────────────
+def _forward(body: bytes) -> None:
+    """把原始 payload 原样转发给线上回调；失败只记日志。"""
+    try:
+        req = urllib.request.Request(
+            _forward_url, data=body,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            logger.info("转发线上 -> {} {}", _forward_url, r.status)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("转发线上失败: {}: {}", type(e).__name__, e)
+
+
 class WebhookHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
@@ -59,6 +73,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self._respond(200, {"status": "ok", "received": count})
 
         # ── 以下操作在 HTTP 响应之后执行，不影响发送端 ──
+
+        # 0. 转发给线上（best-effort，后台线程，失败不影响本地落盘）
+        if _forward_url:
+            threading.Thread(target=_forward, args=(body,),
+                             daemon=True).start()
 
         # 1. 解码并保存证据帧（base64 主动剥离，避免 JSONL 膨胀）
         #    兼容两种字段名：旧 frame_base64 / 新 Reporter 的 image_base64
@@ -138,7 +157,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 # ── 入口 ──────────────────────────────────────────────────────────────────
 def main():
-    global _save_dir, _payload_log, _log_only
+    global _save_dir, _payload_log, _log_only, _forward_url
 
     parser = argparse.ArgumentParser(description="Webhook 接收器")
     parser.add_argument("--host", default="0.0.0.0")
@@ -147,9 +166,12 @@ def main():
                         default=str(Path(__file__).resolve().parent / "output"))
     parser.add_argument("--log-only", action="store_true",
                         help="只记 payload.jsonl，不落帧（帧统一由服务端落盘）")
+    parser.add_argument("--forward", default=None,
+                        help="把原始 payload 转发给该线上回调 URL（本地存一份，线上不丢）")
     args = parser.parse_args()
 
     _log_only = bool(args.log_only)
+    _forward_url = (args.forward or "").strip() or None
     _save_dir = Path(args.save_dir)
     _save_dir.mkdir(parents=True, exist_ok=True)
     _payload_log = _save_dir / "payload.jsonl"

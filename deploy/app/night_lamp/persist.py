@@ -20,6 +20,7 @@ import numpy as np
 from loguru import logger
 
 STATE_VERSION = 1
+EVIDENCE_VERSION = 1   # per-hour flash evidence schema (separate from state)
 STATE_DIR = "night_state"
 ARCHIVE_DIR = "night_archive"
 

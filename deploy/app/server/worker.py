@@ -29,6 +29,7 @@ from .source import Reader
 LOG_EVERY = 100
 EVENTS_KEPT = 200
 PUMP_INTERVAL_S = 0.5
+TICK_PERIOD_S = 0.02
 STOP_JOIN_TIMEOUT_S = 5.0
 STREAM_LOST_AFTER_S = 10.0
 STREAM_HEARTBEAT_S = 600.0
@@ -160,6 +161,7 @@ class CameraWorker:
         self._n = 0
         self._built = False
         self._day_runners: dict = {}
+        self._day_alarm_pending: dict = {}
         self._night: dict = {}
         self._latest_frame = None
         self._stop = threading.Event()
@@ -167,6 +169,8 @@ class CameraWorker:
         self._stream_last_emit = None
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name=f"cam-{self.id}")
+        self._ticker = threading.Thread(target=self._tick_loop, daemon=True,
+                                        name=f"tick-{self.id}")
 
     # ------------------------------------------------------------ 只读出口
     @property
@@ -181,6 +185,7 @@ class CameraWorker:
         self._stop.clear()
         self._reader.start()
         self._thread.start()
+        self._ticker.start()
         return self
 
     def stop(self):
@@ -188,6 +193,18 @@ class CameraWorker:
         self._reader.stop()
         if self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=STOP_JOIN_TIMEOUT_S)
+        if self._ticker.is_alive() and self._ticker is not threading.current_thread():
+            self._ticker.join(timeout=STOP_JOIN_TIMEOUT_S)
+
+    def _tick_loop(self):
+        """Independent wall-clock ticker.
+
+        Grid sampling must not share the frame loop's critical path (1080p
+        preview encode + day algorithms): a slow iteration used to collapse
+        several due grid points onto one stale frame and silently drop samples.
+        """
+        while not self._stop.wait(TICK_PERIOD_S):
+            self._tick_night(self._clock.wall())
 
     def latest(self):
         with self._lock:
@@ -368,7 +385,10 @@ class CameraWorker:
         logger.info("[{}] 夜间 finalize 完成并 release", self.id)
 
     def snapshot_reports(self, ts_wall: datetime) -> list:
-        """HOURLY_SNAPSHOT：对含 report_interval_s 且当前活跃的白昼算法出图。"""
+        """HOURLY_SNAPSHOT：本小时内出过真报警的白昼算法才出图。
+
+        无真报警则整点不推送（告警本身由 submit_event 即时上报，不丢）。
+        """
         out = []
         for name, runner in list(self._day_runners.items()):
             binding = (getattr(self._camera, "algorithms", None) or {}).get(name)
@@ -376,6 +396,9 @@ class CameraWorker:
             if not getattr(spec, "report_interval_s", None):
                 continue
             if not self._scheduler.is_active(self.id, name):
+                self._day_alarm_pending[name] = False
+                continue
+            if not self._day_alarm_pending.get(name):
                 continue
             try:
                 rep = runner.snapshot(ts_wall)
@@ -383,6 +406,7 @@ class CameraWorker:
                 logger.exception("[{}] snapshot 失败: {}", self.id, name)
                 continue
             if rep is not None:
+                self._day_alarm_pending[name] = False
                 out.append(rep)
         return out
 
@@ -410,8 +434,6 @@ class CameraWorker:
             now_mono = self._clock.monotonic()
             _seq_fn = getattr(self._reader, "seq", None)
             frame_id = _seq_fn() if callable(_seq_fn) else None
-            # 墙钟 tick：与是否有帧无关，保证断流时桶仍能按整点结算出图。
-            self._tick_night(now_wall)
             if frame is None:
                 time.sleep(0.05)
                 continue
@@ -432,6 +454,8 @@ class CameraWorker:
                 annots += res.annots
                 debug.update(res.debug)
                 events += res.events
+                if any(e.kind == "alarm" for e in res.events):
+                    self._day_alarm_pending[name] = True
                 for rep in getattr(res, "reports", None) or ():
                     try:
                         self.publish(rep)

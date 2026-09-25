@@ -37,14 +37,16 @@ Design (and the online-vs-golden deltas this file makes explicit):
 Known online-vs-golden differences (reported in metadata, not hidden):
   - warm baseline = first N samples, golden = N spread over the whole night;
   - series start at discovery time, golden starts at sample 0;
-  - lag windows use the measured sample rate, golden uses video fps/step;
+  - lag windows use the design grid rate (1/interval), golden uses video fps/step;
   - reflection hosts are matched to the nearest tracked pixel;
   - dynamic-blob lamp cores are only tracked if discovered while rolling.
 """
 from __future__ import annotations
 
+import functools
 import os
 import sys
+import threading
 
 import cv2 as cv
 import numpy as np
@@ -58,7 +60,10 @@ from server.contracts import AlignmentStatus, NightLampSpec  # noqa: E402
 
 from night_lamp import report as R  # noqa: E402
 from night_lamp.periodicity import ac_limited, clean_train, onsets_of  # noqa: E402
-from night_lamp.persist import STATE_VERSION as _STATE_VERSION  # noqa: E402
+from night_lamp.persist import (  # noqa: E402
+    EVIDENCE_VERSION as _EVIDENCE_VERSION,
+    STATE_VERSION as _STATE_VERSION,
+)
 from night_lamp.tools import nightly_map as nm  # noqa: E402
 
 
@@ -99,6 +104,21 @@ _MIN_DISCOVERY_SAMPLES = 250   # ~40s before the first pass (kill early speckle)
 _WATCH_MIN_ON = 3              # rolling ON floor for a tracked core
 _DEDUP_R = 4                   # px; one tracked core per lamp, not per pass
 _BASE_BLOCK_ROWS = 256         # warm baseline is built blockwise to bound RAM
+_CHANGE_POINT_DELTA = 20.0     # global-median jump (gray) => reset EMA baseline
+
+
+def _synchronized(method):
+    """Serialize a NightSession public method on its own RLock.
+
+    ``tick`` runs on the camera worker thread while ``freeze``/``finalize``/
+    ``save_state`` run on the runtime pump thread; the spatial accumulators and
+    the per-hour flash evidence are shared, so they must not interleave.
+    """
+    @functools.wraps(method)
+    def _wrap(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return _wrap
 
 
 class TemporalSeries:
@@ -366,6 +386,7 @@ class NightSession:
     def __init__(self, camera_id: str, spec: NightLampSpec):
         self._camera_id = camera_id
         self._spec = spec
+        self._lock = threading.RLock()
         self._max_candidates = int(spec.memory.max_candidates)
         self._series_cap = spec.memory.series_cap
         self._max_points = 3 * self._max_candidates + nm.DYN_MAX_PEAK
@@ -373,6 +394,13 @@ class NightSession:
         self._discovery = CandidateDiscovery(self._series, self._max_candidates)
         self._baseline_frames = max(1, int(spec.baseline.frames))
         self._warmup_s = float(spec.baseline.warmup_s)
+        self._ema_half_life_s = float(
+            getattr(spec.baseline, "ema_half_life_s", 1800.0) or 0.0)
+        _interval_s = max(int(spec.sampling.interval_ms), 1) / 1000.0
+        self._ema_alpha = (1.0 - 0.5 ** (_interval_s / self._ema_half_life_s)
+                           if self._ema_half_life_s > 0 else 1.0)
+        self._last_med = None
+        self._base_reset = False
         self._period = spec.periodicity
         self._alignment = spec.alignment
         self._discovery_every = _DISCOVERY_EVERY
@@ -406,6 +434,9 @@ class NightSession:
         self._peak = None
         self._excess = None
         self._on_hit = None
+        self._flash_union = None
+        self._flash_count = None
+        self._n_flash_buckets = 0
 
         self._n_seen = 0
         self._first_ts = None
@@ -455,6 +486,7 @@ class NightSession:
     def restored(self) -> bool:
         return self._restored
 
+    @_synchronized
     def dump_state(self):
         """序列化跨重启所需的累计状态；尚未完成预热时返回 None。"""
         if not self._warm_done or self._base is None:
@@ -477,8 +509,15 @@ class NightSession:
             "gate_enter": np.float32(self._nan(self._gate_enter)),
             "gate_exit": np.float32(self._nan(self._gate_exit)),
             "gate_persistence": np.int64(self._gate_persistence),
+            "flash_union": (self._flash_union if self._flash_union is not None
+                            else np.zeros((self._h, self._w), np.uint8)),
+            "flash_count": (self._flash_count if self._flash_count is not None
+                            else np.zeros((self._h, self._w), np.uint8)),
+            "n_flash_buckets": np.int64(self._n_flash_buckets),
+            "evidence_version": np.int64(_EVIDENCE_VERSION),
         }
 
+    @_synchronized
     def load_state(self, state) -> bool:
         """从 dump_state 的快照恢复累计，跳过预热；时间态仍由本进程重建。"""
         if not state or self._warm_done:
@@ -507,6 +546,7 @@ class NightSession:
         self._warm_meds = None
         self._overflow_any = bool(state["overflow_any"])
         self._restore_gate(state)
+        self._restore_evidence(state, base.shape)
         self._restored = True
         return True
 
@@ -522,10 +562,32 @@ class NightSession:
         self._gate_exit = None if exit_ != exit_ else exit_
         self._gate_persistence = int(state["gate_persistence"])
 
+    def _restore_evidence(self, state, shape):
+        """Restore per-hour flash evidence when version- and shape-matched.
+
+        ``n_flash_buckets`` is the sentinel for "evidence exists": a zero-count
+        state (e.g. continuous mode, where no BURST snapshot ever accumulates)
+        must leave ``_flash_union`` as None so the morning finalize keeps its
+        per-pixel fallback instead of rendering an empty union.
+        """
+        self._n_flash_buckets = 0
+        if int(state.get("evidence_version", 0)) != _EVIDENCE_VERSION:
+            return
+        n = int(state.get("n_flash_buckets", 0))
+        fu = state.get("flash_union")
+        if n <= 0 or fu is None or np.asarray(fu).shape != shape:
+            return
+        self._flash_union = np.asarray(fu, np.uint8)
+        self._n_flash_buckets = n
+        fc = state.get("flash_count")
+        if fc is not None and np.asarray(fc).shape == shape:
+            self._flash_count = np.asarray(fc, np.uint8)
+
     @staticmethod
     def _nan(value):
         return np.nan if value is None else value
 
+    @_synchronized
     def accumulate(self, frame_bgr, ts_mono: float) -> None:
         if self._released:
             raise RuntimeError("NightSession is released")
@@ -536,6 +598,7 @@ class NightSession:
         if self._mask is None:
             self._h, self._w = gray.shape
             self._mask = nm.osd_mask(self._h, self._w)
+        prev_ts = self._last_ts
         if self._first_ts is None:
             self._first_ts = float(ts_mono)
         self._last_ts = float(ts_mono)
@@ -561,7 +624,8 @@ class NightSession:
                 self._finish_warmup()
             return
 
-        self._process(gray, med)
+        dt = None if prev_ts is None else max(float(ts_mono) - prev_ts, 0.0)
+        self._process(gray, med, dt)
         if self._n_seen % self._discovery_every == 0:
             self._run_discovery()
 
@@ -606,7 +670,11 @@ class NightSession:
         r = self._series.lookup(int(y), int(x))
         return r if self._series.has_data(r) else None
 
-    def _process(self, gray, med):
+    def _process(self, gray, med, dt=None):
+        if (self._last_med is not None
+                and abs(med - self._last_med) > _CHANGE_POINT_DELTA):
+            self._base_reset = True
+        self._last_med = float(med)
         off = int(round(med - self._detrend))
         if self._excess is None:
             self._excess = np.empty(gray.shape, np.float32)
@@ -620,7 +688,33 @@ class NightSession:
         np.greater_equal(ex, nm.ON_DELTA, out=self._on_hit)
         np.add(self._on, self._on_hit, out=self._on)
         np.maximum(self._peak, ex, out=self._peak)
+        self._update_base(gray, off, dt)
         self._series.append(gray, self._mask, off)
+
+    def _update_base(self, gray, off, dt):
+        """Slow per-pixel EMA baseline, foreground-protected.
+
+        Only pixels that are not currently ON are pulled toward the frame, so a
+        lamp's own flashes are never learned into the background.  ``dt`` is the
+        wall seconds since the previous sample (None during warmup replay);
+        a large global-median jump resets the whole pattern to the current frame
+        (IR / exposure switch).
+        """
+        if self._base is None:
+            return
+        det = gray.astype(np.float32)
+        det[self._mask] = 0.0
+        det -= off
+        if self._base_reset:
+            self._base[~self._mask] = det[~self._mask]
+            self._base_reset = False
+            return
+        if dt is None or dt <= 0 or self._ema_half_life_s <= 0:
+            alpha = self._ema_alpha
+        else:
+            alpha = 1.0 - 0.5 ** (dt / self._ema_half_life_s)
+        upd = ~self._on_hit & ~self._mask
+        self._base[upd] = alpha * det[upd] + (1.0 - alpha) * self._base[upd]
 
     def _run_discovery(self):
         if not self._warm_done or self._n_seen <= 0 or self._on is None:
@@ -628,6 +722,20 @@ class NightSession:
         duty = self._on / float(self._n_seen)
         self._discovery.observe(duty, self._on, self._n_seen, self._peak)
         self._overflow_any = self._overflow_any or self._discovery.overflow
+
+    def _accumulate_flash(self, flash):
+        """OR one burst's flash mask into the night evidence.
+
+        Frozen semantics: the morning map is the OR of per-hour presence, not
+        a sustained-duration map; ``_flash_count`` keeps the per-pixel hit
+        count for diagnostics only.
+        """
+        if self._flash_union is None:
+            self._flash_union = np.zeros(flash.shape, np.uint8)
+            self._flash_count = np.zeros(flash.shape, np.uint8)
+        self._flash_union |= flash.astype(np.uint8)
+        self._flash_count[flash] += 1
+        self._n_flash_buckets += 1
 
     def _update_gate(self, med):
         """Stream the night_gate hysteresis; O(1) state, no median history."""
@@ -641,6 +749,7 @@ class NightSession:
         if self._gate_state != prev:
             self._gate_transitions += 1
 
+    @_synchronized
     def begin_burst(self, ts_wall=None) -> None:
         """Start a burst: keep spatial accumulators, reset temporal tracking.
 
@@ -660,6 +769,7 @@ class NightSession:
         self._burst_started_wall = ts_wall
         self._burst_ended_wall = None
 
+    @_synchronized
     def snapshot(self, ts_wall, force: bool = False) -> "R.Report | None":
         """Burst-end cumulative heatmap; does not freeze or release.
 
@@ -697,6 +807,7 @@ class NightSession:
                                   status=R.STATUS_FAILED,
                                   report_type=R.REPORT_TYPE_BURST)
 
+    @_synchronized
     def freeze(self) -> None:
         if self._released:
             raise RuntimeError("NightSession is released")
@@ -707,7 +818,18 @@ class NightSession:
         self._frozen = True
         self._run_discovery()
 
+    def _design_rate_hz(self):
+        """Grid design rate: the cadence the sampler schedules.
+
+        The autocorrelation window is a property of the *design* time base, not
+        of how many samples arrived.  In wall mode the grid timestamps are
+        uniform (``interval_s`` apart), so accepted-count / span understates the
+        rate by the coverage factor and must not size the lag window.
+        """
+        return 1000.0 / max(int(self._spec.sampling.interval_ms), 1)
+
     def _rate_hz(self):
+        """Measured effective rate (diagnostic only; never sizes the lag window)."""
         if self._overnight:
             first, last, n = self._burst_first_ts, self._burst_last_ts, self._burst_n
         else:
@@ -727,9 +849,10 @@ class NightSession:
                       else self._burst_last_ts - self._burst_first_ts)
         return {
             "interval_ms": int(self._spec.sampling.interval_ms),
+            "design_rate_hz": round(self._design_rate_hz(), 4),
+            "effective_rate_hz": round(self._rate_hz(), 4),
             "actual_samples": int(self._n_seen),
             "actual_span_s": round(span, 3),
-            "actual_rate_hz": round(self._rate_hz(), 4),
             "mode": "tail" if self._series_cap is not None else "full",
             "series_cap": self._series_cap,
             "experimental_tail_window": self._series_cap is not None,
@@ -793,6 +916,7 @@ class NightSession:
                              "transitions") if k in night},
         }
 
+    @_synchronized
     def finalize(self, base_frame_bgr, ts_wall) -> R.Report:
         if self._released:
             raise RuntimeError("NightSession is released")
@@ -857,51 +981,78 @@ class NightSession:
             jf = int(np.argmax(duty[ys, xs]))
             fpts.append((int(ys[jf]), int(xs[jf])))
 
-        ref_rows = ([self._tracked_row(y, x) for y, x in pts]
-                    + [self._tracked_row(y, x) for y, x in hosts])
-        ref_series = self._series.aligned_matrix(ref_rows)
-        n_reflect_untracked = sum(1 for r in ref_rows if r is None)
-        dim, n_ref, rel = nm.dim_map(duty, swing, self._base, dyn, lab, cand,
-                                     ref_series, nm.NEIGH_R, nm.DIM_DYNAMIC,
-                                     nm.DIM_REFLECT)
-
-        dyn_pts = nm.dyn_samples(duty, dyn)
-        per_rows = ([self._tracked_row(y, x) for y, x in fpts]
-                    + [self._tracked_row(y, x) for y, x in dyn_pts])
-        per_data = [self._series.series(r) for r in per_rows]
-        n_period_untracked = sum(1 for r in per_rows if r is None)
-
-        rate = self._rate_hz()
-        if rate <= 0:
-            rate = 1.0
+        rate = self._design_rate_hz()
         lag_lo = max(1, int(round(self._period.lag_lo_s * rate)))
         lag_hi = max(lag_lo + 1, int(round(self._period.lag_hi_s * rate)))
 
-        def flashing(i, y, x):
-            on = (per_data[i].astype(np.float64) - self._base[y, x]) >= nm.ON_DELTA
-            if onsets_of(on) < self._period.onset_min:
-                return False
-            curve = ac_limited(on, lag_lo, lag_hi)[2]
-            return clean_train(curve, lag_lo, self._period.peak_floor,
-                               self._period.min_peaks, self._period.gap_tol)[0]
-
         rings = []
-        flash = np.zeros((self._h, self._w), np.uint8)
         n_flash = 0
-        for i, c in enumerate(cand):
-            if flashing(i, *fpts[i]):
-                ys, xs = cand_px[i]
-                flash[ys, xs] = 1
-                r = max(stats[c, cv.CC_STAT_WIDTH],
-                        stats[c, cv.CC_STAT_HEIGHT]) // 2 + nm.RING_PAD
-                rings.append((fpts[i][1], fpts[i][0], r))
+        use_union = (report_type == R.REPORT_TYPE
+                     and self._flash_union is not None
+                     and self._n_flash_buckets > 0)
+
+        if use_union:
+            # Morning report: render from the accumulated per-hour evidence.
+            # The temporal series is per-burst and empty after the final
+            # begin_burst, so it must not be re-run here.  dim_map is skipped
+            # by the Phase-0 decision: dynamic/reflection suppression has no
+            # defined cross-bucket semantics, so the union mask is drawn as-is.
+            flash = self._flash_union > 0
+            dim = np.ones_like(duty, np.float32)
+            rel = None
+            n_ref = 0
+            n_reflect_untracked = 0
+            n_period_untracked = 0
+            n_comp, flash_lab = cv.connectedComponents(flash.astype(np.uint8), 8)
+            for c in range(1, n_comp):
+                ys, xs = np.nonzero(flash_lab == c)
+                if ys.size == 0:
+                    continue
+                r = max(int(ys.max() - ys.min()),
+                        int(xs.max() - xs.min())) // 2 + nm.RING_PAD
+                rings.append((int(xs.mean()), int(ys.mean()), r))
                 n_flash += 1
-        for j, (y, x) in enumerate(dyn_pts):
-            if flashing(len(cand) + j, y, x):
-                cv.circle(flash, (x, y), nm.FLASH_R, 1, -1)
-                rings.append((x, y, nm.RING_R))
-                n_flash += 1
-        flash = flash > 0
+        else:
+            ref_rows = ([self._tracked_row(y, x) for y, x in pts]
+                        + [self._tracked_row(y, x) for y, x in hosts])
+            ref_series = self._series.aligned_matrix(ref_rows)
+            n_reflect_untracked = sum(1 for r in ref_rows if r is None)
+            dim, n_ref, rel = nm.dim_map(duty, swing, self._base, dyn, lab, cand,
+                                         ref_series, nm.NEIGH_R, nm.DIM_DYNAMIC,
+                                         nm.DIM_REFLECT)
+
+            dyn_pts = nm.dyn_samples(duty, dyn)
+            per_rows = ([self._tracked_row(y, x) for y, x in fpts]
+                        + [self._tracked_row(y, x) for y, x in dyn_pts])
+            per_data = [self._series.series(r) for r in per_rows]
+            n_period_untracked = sum(1 for r in per_rows if r is None)
+
+            def flashing(i, y, x):
+                on = (per_data[i].astype(np.float64) - self._base[y, x]) >= nm.ON_DELTA
+                if onsets_of(on) < self._period.onset_min:
+                    return False
+                curve = ac_limited(on, lag_lo, lag_hi)[2]
+                return clean_train(curve, lag_lo, self._period.peak_floor,
+                                   self._period.min_peaks,
+                                   self._period.gap_tol)[0]
+
+            flash_u8 = np.zeros((self._h, self._w), np.uint8)
+            for i, c in enumerate(cand):
+                if flashing(i, *fpts[i]):
+                    ys, xs = cand_px[i]
+                    flash_u8[ys, xs] = 1
+                    r = max(stats[c, cv.CC_STAT_WIDTH],
+                            stats[c, cv.CC_STAT_HEIGHT]) // 2 + nm.RING_PAD
+                    rings.append((fpts[i][1], fpts[i][0], r))
+                    n_flash += 1
+            for j, (y, x) in enumerate(dyn_pts):
+                if flashing(len(cand) + j, y, x):
+                    cv.circle(flash_u8, (x, y), nm.FLASH_R, 1, -1)
+                    rings.append((x, y, nm.RING_R))
+                    n_flash += 1
+            flash = flash_u8 > 0
+            if report_type == R.REPORT_TYPE_BURST:
+                self._accumulate_flash(flash)
 
         ref = dim == nm.DIM_REFLECT
         dim[flash & ~ref] = 1.0
@@ -958,6 +1109,15 @@ class NightSession:
             R.M_N_CAND_TOTAL: n_cand_total,
             R.M_N_FLASH: int(n_flash),
             R.M_N_REFLECT: int(n_ref),
+            R.M_FLASH_SEMANTICS: (R.FLASH_SEMANTICS_PRESENCE if use_union
+                                  else R.FLASH_SEMANTICS_BURST),
+            R.M_FLASH_AREA: int(flash.sum()),
+            R.M_FLASH_UNION_AREA: (int(self._flash_union.sum())
+                                   if self._flash_union is not None
+                                   else int(flash.sum())),
+            R.M_FLASH_BUCKET_COUNT: int(self._n_flash_buckets),
+            R.M_CALIBRATION_STATUS: getattr(self._spec.status, "value",
+                                            self._spec.status),
             R.M_ONLINE: {
                 "n_tracked_points": int(self._series.n_points),
                 "n_tracked_candidates": int(self._discovery.n_candidate_cores),
@@ -1006,9 +1166,11 @@ class NightSession:
             "started_at": self._iso(self._burst_started_wall),
             "ended_at": self._iso(self._burst_ended_wall),
             "samples": int(self._burst_n),
-            "rate_hz": round(self._rate_hz(), 4),
+            "design_rate_hz": round(self._design_rate_hz(), 4),
+            "effective_rate_hz": round(self._rate_hz(), 4),
         }
 
+    @_synchronized
     def release(self) -> None:
         self._warm_stack = None
         self._warm_meds = None
@@ -1019,6 +1181,11 @@ class NightSession:
         self._excess = None
         self._on_hit = None
         self._mask = None
+        self._flash_union = None
+        self._flash_count = None
+        self._n_flash_buckets = 0
+        self._last_med = None
+        self._base_reset = False
         if self._series is not None:
             self._series.release()
         if self._discovery is not None:

@@ -60,6 +60,12 @@ def offscreen(cfg, img_path: str, repeat: int = 14, camera: str = None,
     logger.info("状态叠加已保存: {}", out)
 
 
+def _configure_logging(level):
+    """Honor runtime.log_level for loguru; uvicorn's flag only covers uvicorn."""
+    logger.remove()
+    logger.add(sys.stderr, level=str(level or "warning").upper())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", help="配置文件路径（默认 deploy/config.yaml）")
@@ -80,6 +86,7 @@ def main():
     if args.config:
         os.environ["BARRIGUARD_CONFIG"] = args.config
     host, port = p.get("host", "127.0.0.1"), int(p.get("port", 8000))
+    _configure_logging(p.get("log_level", "warning"))
     logger.info("BarriGuard 启动: http://{}:{}", host, port)
     import uvicorn
     uvicorn.run("server.app:app", host=host, port=port,

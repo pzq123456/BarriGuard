@@ -134,6 +134,7 @@ class MemorySpec:
 class BaselineSpec:
     frames: int = 60
     warmup_s: int = 600
+    ema_half_life_s: float = 1800.0   # slow per-pixel baseline half-life (0=freeze)
 
 
 @dataclass

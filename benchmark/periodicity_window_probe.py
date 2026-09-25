@@ -110,7 +110,7 @@ def main(argv=None) -> int:
     cap.release()
     sess.freeze()
 
-    rate = sess._rate_hz() or 1.0
+    rate = sess._design_rate_hz() or 1.0
     lag_lo = max(1, int(round(spec.periodicity.lag_lo_s * rate)))
     lag_hi = max(lag_lo + 1, int(round(spec.periodicity.lag_hi_s * rate)))
 

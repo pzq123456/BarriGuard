@@ -50,6 +50,16 @@ M_PERIOD_STEP = "period_step"
 M_BURST = "burst"
 M_ADAPTER = "adapter"
 M_RESTORED = "restored"
+M_FLASH_SEMANTICS = "flash_semantics"
+M_FLASH_AREA = "flash_area"
+M_FLASH_UNION_AREA = "flash_union_area"
+M_FLASH_BUCKET_COUNT = "flash_bucket_count"
+M_CALIBRATION_STATUS = "calibration_status"
+
+# Frozen semantics: the morning map is the OR of per-hour flash presence,
+# never a sustained-duration map (see the Phase-0 decision).
+FLASH_SEMANTICS_PRESENCE = "presence_or"   # morning: OR of hourly presence
+FLASH_SEMANTICS_BURST = "burst_periodic"   # hourly: that burst's periodic verdict
 
 IMAGE_MODE_NIGHT = "night"
 IMAGE_MODE_DAY = "day_overlay"
