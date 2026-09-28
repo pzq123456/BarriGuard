@@ -1,6 +1,8 @@
 # BarriGuard 部署编排。
 # 构建上下文 = 本目录（deploy/），自包含：app/ 内即三个生产包。
 # 直接 docker compose up --build 即可。
+name: barri-guard
+
 services:
   barriguard:
     build:
@@ -12,8 +14,6 @@ services:
       - TZ=Asia/Shanghai
       # 生产配置（唯一运行期配置）
       - BARRIGUARD_CONFIG=${BARRIGUARD_CONFIG:-/app/config.yaml}
-    ports:
-      - "18080:8000"                 # host:container
     volumes:
       # 运行期配置覆盖镜像内兜底 config.yaml，路径与 env 一致。
       # server/config.py 优先读 BARRIGUARD_CONFIG，回落到 ROOT/config.yaml。
