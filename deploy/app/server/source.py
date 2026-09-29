@@ -22,6 +22,44 @@ os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
 RETRY_WAIT_S = 3.0
 TIMEOUT_US = 10000000  # socket 停滞即 abort，由本层重连（新版 ffmpeg 叫 -timeout，老 -stimeout 已废弃）
 
+# 灰帧自愈：cv2 / Debian 7.1 / essentials 构建解 1749 的 HEVC 会持续输出灰帧
+# （std≈2~7，正常画面 40~70）。持续 GREY_RUN_LIMIT 帧近灰就判解码失败并重连，
+# 不再静默失明。
+FFMPEG_ENV = "BARRIGUARD_FFMPEG"  # 显式指定 ffmpeg 路径，优先于 PATH
+GREY_STD_TH = 12.0
+GREY_RUN_LIMIT = 125
+GREY_SUBSAMPLE = 8
+
+
+def _flag_supported(path: str, flags: list) -> bool:
+    """跑一个 1 帧的 lavfi 空转，确认该 ffmpeg 认这组输出选项。"""
+    cmd = [path, "-hide_banner", "-v", "error", "-f", "lavfi",
+           "-i", "testsrc=d=0.04", "-frames:v", "1"] + list(flags) + [
+        "-f", "null", "-"]
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=15).returncode == 0
+    except Exception:
+        return False
+
+
+def _passthrough_args(path: str) -> list:
+    """帧率直通参数：新版只有 -fps_mode（-vsync 已被移除，传了直接 rc=8），
+    老版用 -vsync；都探测不到则不传。"""
+    for flags in (["-fps_mode", "passthrough"], ["-vsync", "0"]):
+        if _flag_supported(path, flags):
+            return flags
+    return []
+
+
+def _version_of(path: str) -> str:
+    """ffmpeg 版本首行，仅用于把解码后端写进日志。"""
+    try:
+        out = subprocess.check_output([path, "-version"],
+                                      stderr=subprocess.DEVNULL, timeout=10)
+        return out.decode("utf-8", "replace").splitlines()[0].strip()
+    except Exception:
+        return "unknown"
+
 
 class Reader:
     def __init__(self, url: str):
@@ -36,6 +74,10 @@ class Reader:
         self._started_mono = None
         self._last_frame_mono = None
         self._reconnects = 0
+        self._grey_run = 0
+        self._backend = None
+        self._ffmpeg = None
+        self._passthrough = []
 
     def start(self):
         self._started_mono = time.monotonic()
@@ -62,6 +104,8 @@ class Reader:
                 "seconds_since_frame": (None if last is None
                                         else time.monotonic() - last),
                 "reconnects": self._reconnects,
+                "backend": self._backend,
+                "grey_run": self._grey_run,
             }
 
     def _mark_frame(self):
@@ -74,6 +118,12 @@ class Reader:
             self._connected = value
             if not value:
                 self._reconnects += 1
+
+    def _is_grey(self, frame) -> bool:
+        """抽样估灰度 std；近常量即判灰帧（正常画面 40~70，灰帧 <10）。"""
+        small = frame[::GREY_SUBSAMPLE, ::GREY_SUBSAMPLE]
+        gray = cv.cvtColor(small, cv.COLOR_BGR2GRAY) if small.ndim == 3 else small
+        return float(gray.std()) < GREY_STD_TH
 
     def read(self):
         """最新帧，无帧返回 None。调用方持副本，线程安全。"""
@@ -105,14 +155,33 @@ class Reader:
 
     def _loop(self):
         if not self._is_stream():
+            self._backend = "cv2-local"
             logger.info("本地输入(cv2): {}", self._url)
             self._loop_cv()
             return
-        if shutil.which("ffmpeg"):
+        self._ffmpeg = self._resolve_ffmpeg()
+        if self._ffmpeg:
+            self._backend = "ffmpeg"
+            self._passthrough = _passthrough_args(self._ffmpeg)
+            logger.info("解码后端 ffmpeg: {} | {} | passthrough={}",
+                        self._ffmpeg, _version_of(self._ffmpeg),
+                        self._passthrough or "-")
             self._loop_pipe()
         else:
-            logger.warning("无 ffmpeg，走 cv2 回退（HEVC 可能灰帧）")
+            self._backend = "cv2"
+            logger.warning("无 ffmpeg，走 cv2 回退：1749 的 HEVC 会持续灰帧，"
+                           "必须给镜像装 ffmpeg（见 deploy/Dockerfile）")
             self._loop_cv()
+
+    def _resolve_ffmpeg(self):
+        """显式 env > PATH；都找不到返回 None（回退 cv2）。"""
+        override = os.environ.get(FFMPEG_ENV, "").strip()
+        if override:
+            if os.path.isfile(override):
+                return override
+            logger.warning("{}={} 不存在，回退 PATH 查找", FFMPEG_ENV, override)
+        found = shutil.which("ffmpeg")
+        return found or None
 
     def _is_stream(self) -> bool:
         return self._url.lower().startswith(
@@ -142,10 +211,10 @@ class Reader:
         return None
 
     def _spawn(self):
-        cmd = ["ffmpeg", "-hide_banner", "-v", "error",
+        cmd = [self._ffmpeg or "ffmpeg", "-hide_banner", "-v", "error",
                "-rtsp_transport", "tcp", "-timeout", str(TIMEOUT_US),
                "-fflags", "nobuffer", "-i", self._url,
-               "-f", "rawvideo", "-pix_fmt", "bgr24", "-vsync", "0", "-"]
+               "-f", "rawvideo", "-pix_fmt", "bgr24", *self._passthrough, "-"]
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def _read_exact(self, n: int):
@@ -189,6 +258,15 @@ class Reader:
                 if raw is None:
                     break
                 frame = np.frombuffer(raw, np.uint8).reshape(h, w, 3).copy()
+                if self._is_grey(frame):
+                    self._grey_run += 1
+                    if self._grey_run >= GREY_RUN_LIMIT:
+                        logger.error("画面持续近灰(run={})，判解码失败并重连: {}",
+                                     self._grey_run, self._url)
+                        self._grey_run = 0
+                        break
+                else:
+                    self._grey_run = 0
                 with self._lock:
                     self._frame = frame
                     self._seq += 1

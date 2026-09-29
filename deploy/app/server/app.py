@@ -16,10 +16,14 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from .config import load_runtime
+from .logging_setup import configure as _configure_logging, startup_banner
 from .worker import Runtime
 
 _cfg = load_runtime(os.environ.get("BARRIGUARD_CONFIG") or None)
 _p = _cfg.server if isinstance(_cfg.server, dict) else {}
+# 直接 uvicorn server.app:app 启动时也要落盘日志；与 __main__ 重复调用为 no-op。
+_configure_logging(_p.get("log_level", "warning"), _p.get("output_dir"),
+                   _p.get("log_dir"), banner=startup_banner(_cfg))
 _runtime = Runtime(_cfg)
 _workers = _runtime.workers
 _first = next(iter(_workers.values()), None)

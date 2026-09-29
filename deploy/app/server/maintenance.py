@@ -13,18 +13,22 @@ from loguru import logger
 
 _SWEEP_INTERVAL_S = 3600.0
 _MIN_INTERVAL_S = 60.0
+# 日志目录不参与 retention 清理：日志是排障底料，不能被 48h TTL 顺手删掉。
+DEFAULT_SKIP_NAMES = ("logs",)
 
 
 class Sweeper:
     """后台线程：每 ``interval_s`` 扫一次，删除 mtime 早于 TTL 的文件。"""
 
-    def __init__(self, roots, retention_hours, interval_s=_SWEEP_INTERVAL_S):
+    def __init__(self, roots, retention_hours, interval_s=_SWEEP_INTERVAL_S,
+                 skip_names=DEFAULT_SKIP_NAMES):
         seen: list[str] = []
         for r in roots:
             s = str(r or "").strip()
             if s and s not in seen:
                 seen.append(s)
         self._roots = [Path(s) for s in seen]
+        self._skip = {str(n) for n in (skip_names or ())}
         self._ttl_s = max(float(retention_hours), 0.0) * 3600.0
         self._interval_s = max(float(interval_s), _MIN_INTERVAL_S)
         self._stop = threading.Event()
@@ -60,6 +64,8 @@ class Sweeper:
                 continue
             for path in root.rglob("*"):
                 try:
+                    if self._skip.intersection(path.parts):
+                        continue
                     if path.is_file() and path.stat().st_mtime < cutoff:
                         path.unlink()
                         removed += 1

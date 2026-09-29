@@ -1,15 +1,27 @@
-# BarriGuard 运行时镜像 —— 纯 Python，无 apt、无系统 ffmpeg。
+# BarriGuard 运行时镜像 —— python:3.12-slim + 一个静态 ffmpeg 二进制。
 #
-# 为什么不需要 ffmpeg 二进制：
-#   server/source.py 在 shutil.which("ffmpeg") 为空时回退到
-#   cv2.VideoCapture(CAP_FFMPEG)，用的是 opencv-python(-headless) wheel 自带的
-#   FFmpeg。已在真实 1749 的 HEVC 流上实测（1920x1080@25，60 帧无灰帧）。
-#   用 headless 变体还免掉了 libGL / libSM / libXext 等系统库。
+# 为什么必须自带 ffmpeg（2026-09-29 实测）：
+#   1749 是 HEVC 流。cv2(opencv-python-headless) 自带 FFmpeg、imageio-ffmpeg 的
+#   essentials 构建、以及 Debian 的 ffmpeg 7.1 解这条流都会**持续输出灰帧**
+#   （luma std≈2~7；正常画面 40~70），导致水马白天一直 OCCLUDED、零输出。
+#   只有较新的 ffmpeg（BtbN master, 2026）能正常解码，故用多阶段构建把它的
+#   ffmpeg 二进制放进最终镜像的 PATH；最终镜像仍是 slim，只多一个二进制文件。
 #
-# 构建上下文 = deploy/ 目录（见 docker-compose.yml），自包含生产世界：
+# 构建上下文 = deploy/ 目录（见 docker-compose.yml）：
 #   app/ 下 server/ water_barrier/ night_lamp/ 三个包，包名不变、import 不变；
 #   COPY app/ /app/ 后 PYTHONPATH=/app，`python -m server` 直接可用。
-# 水马标定 YAML 在各算法包里，随 app/ 一起进镜像。
+#   水马标定 YAML 在各算法包里，随 app/ 一起进镜像。
+
+FROM debian:bookworm-slim AS ffmpeg
+# 需要 ffmpeg>=8/master；Debian 7.1 与 essentials 构建均会灰帧。
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL "$FFMPEG_URL" -o /tmp/ff.tar.xz \
+ && tar -xf /tmp/ff.tar.xz -C /tmp \
+ && cp /tmp/ffmpeg-*/bin/ffmpeg /opt/ffmpeg \
+ && /opt/ffmpeg -version | head -1
 
 FROM python:3.12-slim
 
@@ -22,8 +34,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# 版本对齐 uv.lock。
-# 不装 torch / torchvision / ultralytics / scipy / simplejpeg：源码零 import。
+# 版本对齐 uv.lock。不装 torch / torchvision / ultralytics / scipy / simplejpeg。
 RUN pip install --no-cache-dir \
     "fastapi==0.141.1" \
     "uvicorn==0.52.4" \
@@ -32,6 +43,9 @@ RUN pip install --no-cache-dir \
     "opencv-python-headless==5.0.0.93" \
     "pyyaml==6.0.3" \
     "tzdata==2026.4"
+
+# 静态 ffmpeg（见文件头）。放 PATH，source.py 的 shutil.which("ffmpeg") 直接命中。
+COPY --from=ffmpeg /opt/ffmpeg /usr/local/bin/ffmpeg
 
 # 自包含生产世界：上下文内 app/ 即容器内 /app（包名不变）。
 COPY app/ /app/

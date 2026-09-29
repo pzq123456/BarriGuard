@@ -21,6 +21,7 @@ import cv2 as cv
 from loguru import logger
 
 from . import registry, render
+from .contracts import ScheduleState
 from .schedule import (
     Clock, RealClock, RuntimeEvent, RuntimeEventType, Scheduler,
 )
@@ -33,6 +34,12 @@ TICK_PERIOD_S = 0.02
 STOP_JOIN_TIMEOUT_S = 5.0
 STREAM_LOST_AFTER_S = 10.0
 STREAM_HEARTBEAT_S = 600.0
+
+# 夜间 finalize 的对齐基准帧：用 DAY 期缓存的亮帧，而不是 07:00 的实时帧。
+# 07:00 相机可能仍是红外/暗帧，拿它做 ECC 会直接 rejected（2026-09-29 1749 cc=-1）。
+DAY_REF_MIN_LUMA = 100.0
+DAY_REF_REFRESH_S = 1800.0
+DAY_DIAG_PERIOD_S = 300.0
 
 
 def _default_day_runner(camera, spec, algo):
@@ -164,6 +171,9 @@ class CameraWorker:
         self._day_alarm_pending: dict = {}
         self._night: dict = {}
         self._latest_frame = None
+        self._day_ref = None
+        self._day_ref_mono = 0.0
+        self._diag_last: dict = {}
         self._stop = threading.Event()
         self._stream_lost = False
         self._stream_last_emit = None
@@ -363,15 +373,62 @@ class CameraWorker:
                 logger.exception("[{}] night freeze 失败", self.id)
         logger.info("[{}] 夜间采样冻结", self.id)
 
+    def _maybe_capture_day_ref(self, frame, now_mono):
+        """DAY 期内缓存一帧够亮的画面，供夜间 finalize 对齐（默认半小时刷一次）。
+
+        夜间 finalize 在 07:00，此刻相机常仍是红外/暗帧；用它做 ECC 会直接
+        rejected（2026-09-29 1749 cc=-1）。缓存一帧真正的白昼帧即可稳定对齐。
+        """
+        if self._scheduler.state() != ScheduleState.DAY:
+            return
+        if (self._day_ref is not None
+                and now_mono - self._day_ref_mono < DAY_REF_REFRESH_S):
+            return
+        if float(frame.mean()) < DAY_REF_MIN_LUMA:
+            return
+        self._day_ref = frame.copy()
+        self._day_ref_mono = now_mono
+
+    def _select_day_base(self):
+        """给 finalize 的对齐基准帧；返回 (frame, source)。"""
+        if self._day_ref is not None:
+            return self._day_ref, "day_ref"
+        if self._latest_frame is not None:
+            return self._latest_frame.copy(), "live"
+        return None, "none"
+
+    def _log_day_diag(self, name, res):
+        """白昼算法诊断（节流）：support 峰值 / 命中 run 数 / 轨道状态与 RER。"""
+        diag = res.debug.get("diag") if isinstance(res.debug, dict) else None
+        if not isinstance(diag, dict):
+            return
+        logger.info("[{}] {} diag sup_max={} runs={} tracks={}",
+                    self.id, name, diag.get("sup_max"), diag.get("runs"),
+                    diag.get("tracks"))
+
+    def _log_night_report(self, name, report, base, base_src):
+        md = getattr(report, "metadata", None) or {}
+        luma = None if base is None else round(float(base.mean()), 1)
+        dyn = (md.get("online_candidate_discovery") or {}).get("n_tracked_dyn")
+        logger.info(
+            "[{}] night finalize {} status={} base={}(luma={}) image={} "
+            "align={} cc={} flash={} cand={}(+{}) dyn={} overflow={} coverage={}",
+            self.id, name, getattr(report, "status", "?"), base_src, luma,
+            md.get("image_mode"), md.get("alignment_status"),
+            (md.get("day_alignment") or {}).get("cc"), md.get("n_flash"),
+            md.get("n_cand"), md.get("n_cand_total"), dyn,
+            md.get("candidate_overflow"), md.get("coverage"))
+
     def finalize_night(self, ts_wall: datetime):
-        """NIGHT_FINALIZE：latest_frame -> finalize -> submit -> release（按夜隔离）。"""
+        """NIGHT_FINALIZE：day_ref -> finalize -> submit -> release（按夜隔离）。"""
         with self._lock:
             adapters = list(self._night.items())
-            base = None if self._latest_frame is None else self._latest_frame.copy()
+        base, base_src = self._select_day_base()
         for name, ad in adapters:
             try:
                 report = ad.finalize(base, ts_wall)
                 if report is not None:
+                    self._log_night_report(name, report, base, base_src)
                     self.publish(report)
             except Exception:
                 logger.exception("[{}] night finalize 失败: {}", self.id, name)
@@ -440,6 +497,7 @@ class CameraWorker:
             if not self._built:
                 self._build(frame.shape)
             self._latest_frame = frame
+            self._maybe_capture_day_ref(frame, now_mono)
 
             annots, debug, events = [], {}, []
             status = "OK"
@@ -464,6 +522,9 @@ class CameraWorker:
                                          self.id, name)
                 if isinstance(res.debug.get("frame_status"), str):
                     status = res.debug["frame_status"]
+                if now_mono - self._diag_last.get(name, 0.0) >= DAY_DIAG_PERIOD_S:
+                    self._log_day_diag(name, res)
+                    self._diag_last[name] = now_mono
 
             with self._lock:
                 adapters = list(self._night.items())

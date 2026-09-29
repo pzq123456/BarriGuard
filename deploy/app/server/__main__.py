@@ -60,10 +60,13 @@ def offscreen(cfg, img_path: str, repeat: int = 14, camera: str = None,
     logger.info("状态叠加已保存: {}", out)
 
 
-def _configure_logging(level):
-    """Honor runtime.log_level for loguru; uvicorn's flag only covers uvicorn."""
-    logger.remove()
-    logger.add(sys.stderr, level=str(level or "warning").upper())
+def _configure_logging(cfg):
+    """控制台 + 落盘文件（部署日志）；uvicorn 的 flag 只管它自己。"""
+    from .logging_setup import configure, startup_banner
+    p = cfg.server if isinstance(cfg.server, dict) else {}
+    return configure(p.get("log_level", "warning"),
+                     output_dir=p.get("output_dir"), log_dir=p.get("log_dir"),
+                     banner=startup_banner(cfg))
 
 
 def main():
@@ -78,6 +81,7 @@ def main():
     if args.offscreen:
         # 离线校验走生产拓扑加载（算法标定层）。
         cfg = load_runtime(args.config)
+        _configure_logging(cfg)
         offscreen(cfg, args.offscreen, args.repeat, args.camera, algo=args.algo)
         return
 
@@ -86,7 +90,7 @@ def main():
     if args.config:
         os.environ["BARRIGUARD_CONFIG"] = args.config
     host, port = p.get("host", "127.0.0.1"), int(p.get("port", 8000))
-    _configure_logging(p.get("log_level", "warning"))
+    _configure_logging(cfg)
     logger.info("BarriGuard 启动: http://{}:{}", host, port)
     import uvicorn
     uvicorn.run("server.app:app", host=host, port=port,

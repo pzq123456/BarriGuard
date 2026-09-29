@@ -52,7 +52,8 @@ TOP_KEYS = {"version", "runtime", "schedule", "callback", "cameras"}
 TOP_REQUIRED = ("version", "runtime", "schedule", "callback", "cameras")
 
 RUNTIME_KEYS = {
-    "host", "port", "jpeg_quality", "log_level", "memory_budget_mb_per_camera",
+    "host", "port", "jpeg_quality", "log_level", "log_dir",
+    "memory_budget_mb_per_camera",
     "output_dir", "alarm_dir", "persist_images", "retention_hours",
 }
 RUNTIME_REQUIRED = ("host", "port")
@@ -201,6 +202,8 @@ def _parse_runtime(d, where):
         server["jpeg_quality"] = q
     if "log_level" in d:
         server["log_level"] = _as_str(d["log_level"], f"{where}.log_level")
+    if "log_dir" in d:
+        server["log_dir"] = _as_str(d["log_dir"], f"{where}.log_dir")
     if "output_dir" in d:
         server["output_dir"] = _as_str(d["output_dir"], f"{where}.output_dir")
     if "alarm_dir" in d:
@@ -435,6 +438,7 @@ def format_manifest(cfg, source=""):
         f"  server    : host={cfg.server.get('host')} port={cfg.server.get('port')} "
         f"jpeg_quality={cfg.server.get('jpeg_quality', '-')} "
         f"log_level={cfg.server.get('log_level', '-')} "
+        f"log_dir={cfg.server.get('log_dir', '-')} "
         f"mem_budget={cfg.memory_budget_mb_per_camera}MB"
     )
     lines.append(f"  cameras   : {len(cfg.cameras)} enabled")

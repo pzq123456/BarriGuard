@@ -473,9 +473,45 @@ def test_graceful_stop():
     graceful_stop()
 
 
+def day_ref_base(ctx=H.Context()):
+    """夜间 finalize 必须优先用缓存的白天基准帧，而不是 07:00 的实时暗帧。"""
+    import server.worker as W
+    from server.contracts import CameraSpec
+    from server.schedule import FakeClock, Scheduler
+
+    original = W.Reader
+    W.Reader = _FakeReader
+    try:
+        cfg = H.build_night_only_cfg("UTC")
+        clock = FakeClock(datetime(2026, 9, 18, 10, 0, tzinfo=TZ))
+        sched = Scheduler(cfg, clock)
+        sched.poll()  # 让状态进入 DAY
+        cam = CameraSpec(id="cam", name="cam", rtsp_url="fake://x", algorithms={})
+        worker = W.CameraWorker(cam, sched, H.NullReporter())
+
+        dark = np.full((8, 8, 3), 10, np.uint8)
+        bright = np.full((8, 8, 3), 200, np.uint8)
+
+        worker._maybe_capture_day_ref(dark, 0.0)
+        if worker._day_ref is not None:
+            raise AssertionError("暗帧不应被选作白天基准")
+        worker._latest_frame = dark
+        if worker._select_day_base()[1] != "live":
+            raise AssertionError("无缓存时应回落到实时帧")
+
+        worker._maybe_capture_day_ref(bright, 1.0)
+        frame, src = worker._select_day_base()
+        if src != "day_ref" or frame is None or float(frame.mean()) < 100:
+            raise AssertionError(f"应优先用白天基准帧, got src={src}")
+    finally:
+        W.Reader = original
+    return "finalize base prefers cached day frame"
+
+
 def checks(ctx):
     return [
         ("reliability.night_resume", lambda: night_resume(ctx)),
+        ("reliability.day_ref_base", lambda: day_ref_base(ctx)),
         ("reliability.adapter_resume", lambda: adapter_resume(ctx)),
         ("reliability.alarm_persisted", lambda: alarm_persisted(ctx)),
         ("reliability.frozen_restart_rebuilds",

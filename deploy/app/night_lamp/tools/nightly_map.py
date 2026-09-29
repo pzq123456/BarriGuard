@@ -395,28 +395,53 @@ def draw_caption(img, text):
     return out
 
 
+def _ecc_translation(ref_gray, day_gray):
+    """单次 ECC 平移配准；不收敛返回 None（不把 cv.error 抛给调用方）。"""
+    warp = np.eye(2, 3, dtype=np.float32)
+    crit = (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 50, 1e-4)
+    try:
+        cc, warp = cv.findTransformECC(ref_gray, day_gray, warp,
+                                       cv.MOTION_TRANSLATION, crit)
+    except cv.error:
+        return None
+    return float(cc), float(warp[0, 2]), float(warp[1, 2])
+
+
+def _norm_contrast(img):
+    """CLAHE 拉平昼夜对比度；让 ECC 只对结构敏感（跨域配准常见前置）。"""
+    g = img if img.dtype == np.uint8 else np.clip(img, 0, 255).astype(np.uint8)
+    return cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(g).astype(np.float32)
+
+
 def align_day(day_bgr, ref_gray):
     """ECC translation day->night; returns (aligned day, dx, dy, cc).
 
     Registration is a new single point of failure under this product shape:
     a wrong shift looks 'roughly right' to a human, so it is recorded in the
     ledger (dx/dy/cc), never silent.
+
+    原始灰度对不上（cc<0 或偏低）时，用 CLAHE 拉平昼夜对比度再配一次，取更好的
+    那一路。灰度归一不改变几何，所以两路只比 cc、共用同一 warp。
     """
     h, w = ref_gray.shape
     if day_bgr.shape[:2] != (h, w):
         day_bgr = cv.resize(day_bgr, (w, h))
     dg = cv.cvtColor(day_bgr, cv.COLOR_BGR2GRAY).astype(np.float32)
     rg = ref_gray.astype(np.float32)
-    warp = np.eye(2, 3, dtype=np.float32)
-    crit = (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 50, 1e-4)
-    try:
-        cc, warp = cv.findTransformECC(rg, dg, warp, cv.MOTION_TRANSLATION, crit)
-    except cv.error:
+
+    best = _ecc_translation(rg, dg)
+    norm = _ecc_translation(_norm_contrast(rg), _norm_contrast(dg))
+    if norm is not None and (best is None or norm[0] > best[0]):
+        best = norm
+    if best is None:
         return day_bgr, 0.0, 0.0, -1.0
+
+    cc, dx, dy = best
+    warp = np.float32([[1.0, 0.0, dx], [0.0, 1.0, dy]])
     out = cv.warpAffine(day_bgr, warp, (w, h),
                         flags=cv.INTER_LINEAR | cv.WARP_INVERSE_MAP,
                         borderMode=cv.BORDER_REPLICATE)
-    return out, float(warp[0, 2]), float(warp[1, 2]), float(cc)
+    return out, dx, dy, cc
 
 
 def fine_meds(meds, step, fine_step, scanned):

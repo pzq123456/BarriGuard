@@ -290,6 +290,13 @@ class NightAdapter:
         md["unique_frames"] = int(self._win_emitted)
         md["coverage"] = round(self._win_emitted / float(scheduled_steps), 4)
         md["silent_bucket"] = (self._win_emitted == 0)
+        dyn = (md.get("online_candidate_discovery") or {}).get("n_tracked_dyn")
+        logger.info(
+            "[night {}] burst {} cov={} uniq={}/{} cand={}(+{}) dyn={} "
+            "overflow={} flash={}",
+            self._camera_id, bid, md["coverage"], md["unique_frames"],
+            scheduled_steps, md.get("n_cand"), md.get("n_cand_total"), dyn,
+            md.get("candidate_overflow"), md.get("n_flash"))
         with self._pending_lock:
             self._pending.append(rep)
         self._last_emitted_bucket = bid

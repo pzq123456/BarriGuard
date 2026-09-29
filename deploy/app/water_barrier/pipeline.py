@@ -178,7 +178,21 @@ class WaterGapAlgorithm:
                         {"box": t["box"], "severity": t["severity"],
                          "rer": round(float(t["rer"]), 3), "row_id": t["row_id"]})
                   for t in self._tracks if t["state"] != T.NORMAL]
-        return AlgoResult(events, annots, {"roi_mask": self.fg, "frame_status": status})
+        # 诊断（只读）：能看出"某行到底有没有检出 dip / RER 卡在哪"，供日志落盘。
+        runs: dict = {}
+        for rid, _sta, _box, _sup in gaps:
+            runs[rid] = runs.get(rid, 0) + 1
+        sup = T.support_of(self._sup)
+        diag = {"sup_max": {rid: round(float(np.max(sup[rid])), 3)
+                            for rid in self._sup["row_ids"]},
+                "runs": runs,
+                "tracks": [{"row": t["row_id"], "state": t["state"],
+                            "rer": round(float(t["rer"]), 3),
+                            "box": [int(v) for v in t["box"]]}
+                           for t in self._tracks]}
+        return AlgoResult(events, annots,
+                          {"roi_mask": self.fg, "frame_status": status,
+                           "diag": diag})
 
 
 def _roi_mask(frame_shape, polys):
