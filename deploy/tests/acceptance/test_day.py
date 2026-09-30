@@ -70,5 +70,20 @@ def test_day_runner_plumbing():
     _run(None)
 
 
+def test_calib_auto_ids():
+    from water_barrier.pipeline import load_calibration
+
+    d = load_calibration(
+        Path(__file__).resolve().parents[2] / "app" / "roi_configs" / "1749.yaml")
+    ids = [r["id"] for r in d["rows"]]
+    if ids != ["row_0", "row_1", "row_2"]:
+        raise AssertionError(f"行 id 应自动编号, 实际 {ids}")
+    if any(r.get("U") is None or not r.get("poly") for r in d["rows"]):
+        raise AssertionError("行缺 poly/U")
+    if not d.get("road_rois"):
+        raise AssertionError("缺 road_rois")
+
+
 def checks(ctx):
-    return [("day.runner_plumbing", lambda: _run(ctx.video))]
+    return [("day.runner_plumbing", lambda: _run(ctx.video)),
+            ("day.calib_auto_ids", test_calib_auto_ids)]

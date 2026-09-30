@@ -53,12 +53,13 @@ def _series_mb(session) -> float:
 _TZ = timezone(timedelta(hours=8))
 _META_KEYS = (
     "alignment_status", "day_alignment", "image_mode", "n_cand", "n_cand_total",
-    "n_flash", "n_reflect", "candidate_overflow", "night_state",
+    "n_flash", "n_reflect", "candidate_overflow", "lamp_roi", "night_state",
     "night_qualified", "night_gate", "memory_estimate_mb", "warmup",
     "delta", "lag_frames", "period_step", "restored", "reason",
 )
 _FINAL_KEYS = ("alignment_status", "day_alignment", "image_mode", "n_cand",
                "n_cand_total", "n_flash", "n_reflect", "candidate_overflow",
+               "lamp_roi",
                "night_state", "night_qualified", "memory_estimate_mb", "warmup")
 
 
@@ -118,6 +119,25 @@ def run(args) -> dict:
     if args.series_cap is not None:
         spec.memory.series_cap = (None if args.series_cap == 0
                                   else int(args.series_cap))
+    if args.warmup_s:
+        spec.baseline.warmup_s = float(args.warmup_s)
+    if args.baseline_frames:
+        spec.baseline.frames = int(args.baseline_frames)
+    # 灯带 ROI 对照（off = 关闭；路径 = 启用，复用水马标定 yaml）
+    if args.lamp_roi:
+        if args.lamp_roi.strip().lower() == "off":
+            spec.lamp_roi = {}
+        else:
+            spec.lamp_roi = {"calibration": args.lamp_roi,
+                             "dilate_px": 30, "up_px": 40}
+    # 常数覆盖（session 走 nightly_map 模块属性，故 monkeypatch 生效）
+    from night_lamp.tools import nightly_map as nm
+    if args.on_delta:
+        nm.ON_DELTA = int(args.on_delta)
+    if args.cand_duty_lo:
+        nm.CAND_DUTY_LO = float(args.cand_duty_lo)
+    if args.dyn_min_area:
+        nm.DYN_MIN_AREA = int(args.dyn_min_area)
 
     video = Path(args.video)
     if not video.is_absolute():
@@ -174,6 +194,10 @@ def run(args) -> dict:
         frames += 1
         clock.advance(dt)
         adapter.on_frame(frame, clock.wall(), clock.monotonic())
+        # anchor=wall 的窗口/结算由 tick 驱动（线上也这么走）；stream 锚点下为 no-op。
+        tick = getattr(adapter, "tick", None)
+        if callable(tick):
+            tick(clock.wall())
 
         for rep in adapter.take_reports():
             n_burst += 1
@@ -320,6 +344,17 @@ def main():
     ap.add_argument("--max-candidates", type=int, default=0)
     ap.add_argument("--series-cap", type=int, default=None,
                     help="0=整段全序列(None)，>0=只保留末尾 N 个样本")
+    ap.add_argument("--warmup-s", type=float, default=0.0,
+                    help="覆盖 baseline.warmup_s（短片段 A/B 用）")
+    ap.add_argument("--baseline-frames", type=int, default=0,
+                    help="覆盖 baseline.frames")
+    ap.add_argument("--lamp-roi", default="",
+                    help="水马标定 yaml 路径（启用灯带 ROI）或 off（关闭）")
+    ap.add_argument("--on-delta", type=int, default=0, help="覆盖 ON_DELTA")
+    ap.add_argument("--cand-duty-lo", type=float, default=0.0,
+                    help="覆盖 CAND_DUTY_LO")
+    ap.add_argument("--dyn-min-area", type=int, default=0,
+                    help="覆盖 DYN_MIN_AREA")
     a = ap.parse_args()
     if not a.scheme:
         a.scheme = Path(a.video).stem

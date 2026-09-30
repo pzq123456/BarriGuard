@@ -410,14 +410,17 @@ class CameraWorker:
         md = getattr(report, "metadata", None) or {}
         luma = None if base is None else round(float(base.mean()), 1)
         dyn = (md.get("online_candidate_discovery") or {}).get("n_tracked_dyn")
+        roi = md.get("lamp_roi") or {}
         logger.info(
             "[{}] night finalize {} status={} base={}(luma={}) image={} "
-            "align={} cc={} flash={} cand={}(+{}) dyn={} overflow={} coverage={}",
+            "align={} cc={} flash={} cand={}(+{}) dyn={} overflow={} "
+            "roi={} coverage={}",
             self.id, name, getattr(report, "status", "?"), base_src, luma,
             md.get("image_mode"), md.get("alignment_status"),
             (md.get("day_alignment") or {}).get("cc"), md.get("n_flash"),
             md.get("n_cand"), md.get("n_cand_total"), dyn,
-            md.get("candidate_overflow"), md.get("coverage"))
+            md.get("candidate_overflow"),
+            ("on" if roi.get("enabled") else "off"), md.get("coverage"))
 
     def finalize_night(self, ts_wall: datetime):
         """NIGHT_FINALIZE：day_ref -> finalize -> submit -> release（按夜隔离）。"""

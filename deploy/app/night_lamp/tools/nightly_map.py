@@ -91,6 +91,22 @@ def roi_mask(h, w, calib_path):
     return m > 0
 
 
+def lamp_roi_mask(h, w, calib_path, dilate_px=30, up_px=40):
+    """水马灯带：行带 + 向上扩展（灯在水马上沿）+ 膨胀（灯晕/标定误差）。
+
+    只在带内找警示灯；1750 的亮路面整片 duty 噪声被挡在外面。
+    """
+    m = roi_mask(h, w, calib_path).astype(np.uint8) * 255
+    if up_px > 0:
+        up = np.zeros_like(m)
+        up[:h - up_px] = m[up_px:]
+        m = np.maximum(m, up)
+    if dilate_px > 0:
+        k = cv.getStructuringElement(cv.MORPH_RECT, (dilate_px, dilate_px))
+        m = cv.dilate(m, k)
+    return m > 0
+
+
 def base_index(total, k):
     """K evenly spaced frame indices for baseline (seek pass)."""
     if total <= 0 or k <= 0:

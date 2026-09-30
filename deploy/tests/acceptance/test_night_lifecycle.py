@@ -74,6 +74,49 @@ def released_0701(ctx=H.Context()):
     return "released"
 
 
+def lamp_roi_gates_frame(ctx=H.Context()):
+    """灯带 ROI：掩膜外像素不进累计（duty 全零），带内正常累计。"""
+    import tempfile
+
+    import numpy as np
+
+    from night_lamp.session import NightSession
+    from server.contracts import NightLampSpec
+
+    with tempfile.TemporaryDirectory() as td:
+        calib = (Path(td) / "rows.yaml")
+        calib.write_text(
+            "rows:\n"
+            "  - id: r0\n"
+            "    poly: [[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]]\n"
+            "    U: 10\n"
+            "road_rois: [[0, 0, 10, 10]]\n", encoding="utf-8")
+        spec = NightLampSpec()
+        spec.lamp_roi = {"calibration": str(calib),
+                         "dilate_px": 0, "up_px": 0}
+        sess = NightSession("cam", spec)
+        try:
+            dark = np.full((32, 48, 3), 40, np.uint8)
+            for i in range(30):
+                f = dark.copy()
+                if i % 2 == 0:
+                    f[10:20, 10:20] = 220   # ROI 内闪烁（左半）
+                    f[10:20, 30:40] = 220   # ROI 外闪烁（右半）
+                sess.accumulate(f, i * 0.16)
+            if sess._mask is None:
+                raise AssertionError("mask not built")
+            if not bool(sess._mask[16, 36]):
+                raise AssertionError("ROI 外像素应被排除")
+            if bool(sess._mask[16, 5]):
+                raise AssertionError("ROI 内像素不应被排除")
+            md = (sess._lamp_roi or {})
+            if sess._lamp_roi_frac is None:
+                raise AssertionError("roi frac 未记录")
+        finally:
+            sess.release()
+    return "roi gates accumulation"
+
+
 def test_lifecycle_full():
     lifecycle_full()
 
@@ -101,4 +144,5 @@ def checks(ctx):
         ("night.session_alive_0600", lambda: session_alive_0600(ctx)),
         ("night.finalize_once_0700", lambda: finalize_once_0700(ctx)),
         ("night.released_0701", lambda: released_0701(ctx)),
+        ("night.lamp_roi_gates_frame", lambda: lamp_roi_gates_frame(ctx)),
     ]

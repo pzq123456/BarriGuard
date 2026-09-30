@@ -335,7 +335,7 @@ def water_gap_image_on_disk(ctx=H.Context()):
         frame = cv.imread(str(_DAY_FRAME))
         if frame is None:
             raise H.Unverified("cv2 failed to read day frame")
-        spec = WaterGapSpec(calibration="water_barrier/configs/1749.yaml")
+        spec = WaterGapSpec(calibration="roi_configs/1749.yaml")
         cam = CameraSpec(id="1749", name="1749", rtsp_url="file://day.jpg")
         algo = registry.create("water_gap", frame.shape,
                                _load_calibration("water_gap", spec), "1749")

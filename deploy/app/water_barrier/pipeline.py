@@ -41,24 +41,31 @@ def _need(d, keys, ctx):
 
 
 def load_calibration(fp):
-    """读水马数据文件（rows/road_rois）。
+    """读水马 ROI 数据文件（rows/road_rois）。
 
-    运行期选项（detect/track/策略）已上移 deploy/config.yaml，由 server.worker
-    注入；此处若仍出现 detect/track 则报错，杜绝双源。
+    行 id 已取消：按顺序自动编为 row_0, row_1, ...（兼容仍带 id 的旧文件，
+    显式 id 重复仍报错）。运行期选项（detect/track/策略）已上移
+    deploy/config.yaml，由 server.worker 注入；此处若仍出现 detect/track
+    则报错，杜绝双源。
     """
     fp = Path(fp)
     d = yaml.safe_load(fp.read_text(encoding="utf-8")) or {}
     rows = d.get("rows", [])
     if not rows:
         raise RuntimeError(f"标定缺rows: {fp}")
-    ids = [r.get("id") for r in rows]
-    if any(not i for i in ids) or len(set(ids)) != len(ids):
-        raise RuntimeError(f"rows.id 非法/重复: {fp}")
-    for r in rows:
-        if not r.get("poly"):
-            raise RuntimeError(f"行缺poly: {fp}.{r['id']}")
+    norm = []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict) or not r.get("poly"):
+            raise RuntimeError(f"行缺poly: {fp}.{r.get('id', i) if isinstance(r, dict) else i}")
         if r.get("U") is None:
-            raise RuntimeError(f"行缺U标定: {fp}.{r['id']}")
+            raise RuntimeError(
+                f"行缺U标定: {fp}.{r.get('id', i) if isinstance(r, dict) else i}")
+        norm.append({"id": r.get("id") or f"row_{i}",
+                     "poly": r["poly"], "U": r["U"]})
+    ids = [r["id"] for r in norm]
+    if len(set(ids)) != len(ids):
+        raise RuntimeError(f"rows.id 重复: {fp}")
+    d = dict(d, rows=norm)
     _need(d, ("road_rois",), str(fp))
     for moved in ("detect", "track"):
         if moved in d:

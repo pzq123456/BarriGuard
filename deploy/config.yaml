@@ -53,7 +53,7 @@ cameras:
       water_gap:
         enabled: true
         schedule: day
-        calibration: "water_barrier/configs/1749.yaml"
+        calibration: "roi_configs/1749.yaml"
         status: ready                 # manifest-only
         report_interval_s: 3600     # 每小时一张缺口图（报告节奏）
         alarm_min_interval_s: 3600  # 最小告警间隔（与 report 独立）
@@ -73,6 +73,8 @@ cameras:
         schedule: night
         status: ready                 # manifest-only
         night_gate: {enter_threshold: 100.0, exit_threshold: 120.0, persistence: 2}
+        lamp_roi: {calibration: "roi_configs/1749.yaml",
+                   dilate_px: 30, up_px: 40}
         sampling: {interval_ms: 160}          # Phase 1 起点，非最终真理
         # max_candidates 依赖 anchor=wall（时序逐桶重建，内存有界）；
         # 切回 anchor=stream 整夜单序列会随该值线性放大内存。
@@ -91,7 +93,7 @@ cameras:
       water_gap:
         enabled: true
         schedule: day
-        calibration: "water_barrier/configs/1750.yaml"
+        calibration: "roi_configs/1750.yaml"
         status: calibration_pending   # 沿用但待重标；pending 只打印，不禁用（manifest-only）
         report_interval_s: 3600
         alarm_min_interval_s: 3600
@@ -110,6 +112,8 @@ cameras:
         schedule: night
         status: calibration_pending   # 8 盏 active，参数待重标（manifest-only）
         night_gate: {enter_threshold: 140.0, exit_threshold: 150.0, persistence: 2}
+        lamp_roi: {calibration: "roi_configs/1750.yaml",
+                   dilate_px: 30, up_px: 40}
         sampling: {interval_ms: 160}
         # max_candidates 依赖 anchor=wall（时序逐桶重建，内存有界）；
         # 切回 anchor=stream 整夜单序列会随该值线性放大内存。

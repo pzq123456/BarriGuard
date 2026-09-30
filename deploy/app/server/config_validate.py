@@ -86,8 +86,9 @@ NESTED_SPECS = {
     "detect": DetectSpec,
     "track": TrackSpec,
 }
-# NightLampSpec.night_gate 是裸 dict（contracts 未定数据类），显式列出允许键
+# NightLampSpec.night_gate / lamp_roi 是裸 dict（contracts 未定数据类），显式列出允许键
 NIGHT_GATE_KEYS = {"enter_threshold", "exit_threshold", "persistence"}
+LAMP_ROI_KEYS = {"calibration", "dilate_px", "up_px"}
 
 
 # --- 基础校验助手 -------------------------------------------------------------------
@@ -276,6 +277,27 @@ def _parse_night_gate(d, where):
     return out
 
 
+def _parse_lamp_roi(d, where, base_dir):
+    """水马灯带 ROI：只在水马行附近找警示灯，路面/天空不再进候选。
+
+    空 dict = 关闭（旧行为）。calibration 复用水马标定 yaml（rows poly）。
+    """
+    _reject_unknown(d, LAMP_ROI_KEYS, where)
+    out = {}
+    if "calibration" in d:
+        out["calibration"] = resolve_resource(
+            _as_str(d["calibration"], f"{where}.calibration"),
+            base_dir, f"{where}.calibration")
+    if "dilate_px" in d:
+        out["dilate_px"] = _as_int(d["dilate_px"], f"{where}.dilate_px",
+                                   minimum=0)
+    if "up_px" in d:
+        out["up_px"] = _as_int(d["up_px"], f"{where}.up_px", minimum=0)
+    if out and "calibration" not in out:
+        raise ConfigError(f"{where} 启用 lamp_roi 必须给 calibration（水马标定 yaml）")
+    return out
+
+
 def _parse_nested(cls, d, where):
     _reject_unknown(d, {f.name for f in _dc_fields(cls)}, where)
     kwargs = {}
@@ -312,6 +334,8 @@ def _build_spec(name, b, schedule, status, where, base_dir):
             kwargs[key] = _parse_nested(NESTED_SPECS[key], b[key], kwhere)
         elif key == "night_gate":
             kwargs[key] = _parse_night_gate(b[key], kwhere)
+        elif key == "lamp_roi":
+            kwargs[key] = _parse_lamp_roi(b[key], kwhere, base_dir)
         else:
             kwargs[key] = _coerce(f.type, b[key], kwhere)
     return cls(**kwargs)

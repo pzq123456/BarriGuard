@@ -446,6 +446,25 @@ class NightSession:
         self._restored = False
         self._dropped_after_freeze = 0
         self._init_gate(spec.night_gate)
+        # 水马灯带 ROI（空 = 关闭，旧行为）：只在水马行附近找警示灯。
+        self._lamp_roi = dict(getattr(spec, "lamp_roi", None) or {})
+        self._lamp_roi_frac = None
+
+    def _merge_lamp_roi(self):
+        """灯带 ROI 并入排除掩膜；失败则 fail-open（记错，不杀死本夜）。"""
+        if not self._lamp_roi or self._mask is None:
+            return
+        try:
+            roi = nm.lamp_roi_mask(
+                self._h, self._w, self._lamp_roi["calibration"],
+                int(self._lamp_roi.get("dilate_px", 30)),
+                int(self._lamp_roi.get("up_px", 40)))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("lamp_roi 构建失败，本夜按全帧跑: {}", exc)
+            self._lamp_roi = {}
+            return
+        self._mask = self._mask | ~roi
+        self._lamp_roi_frac = round(float(roi.mean()), 4)
 
     def _init_gate(self, gate):
         """Online night-qualification state (O(1); no full-night median list)."""
@@ -538,6 +557,7 @@ class NightSession:
 
         self._h, self._w = int(base.shape[0]), int(base.shape[1])
         self._mask = nm.osd_mask(self._h, self._w)
+        self._merge_lamp_roi()
         self._base, self._bg, self._on, self._peak = base, bg, on, peak
         self._detrend = float(state["detrend"])
         self._n_seen = int(state["n_seen"])
@@ -598,6 +618,7 @@ class NightSession:
         if self._mask is None:
             self._h, self._w = gray.shape
             self._mask = nm.osd_mask(self._h, self._w)
+            self._merge_lamp_roi()
         prev_ts = self._last_ts
         if self._first_ts is None:
             self._first_ts = float(ts_mono)
@@ -1118,6 +1139,8 @@ class NightSession:
             R.M_FLASH_BUCKET_COUNT: int(self._n_flash_buckets),
             R.M_CALIBRATION_STATUS: getattr(self._spec.status, "value",
                                             self._spec.status),
+            R.M_LAMP_ROI: {"enabled": bool(self._lamp_roi),
+                           "frac": self._lamp_roi_frac},
             R.M_ONLINE: {
                 "n_tracked_points": int(self._series.n_points),
                 "n_tracked_candidates": int(self._discovery.n_candidate_cores),

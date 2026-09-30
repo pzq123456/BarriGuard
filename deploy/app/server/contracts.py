@@ -178,6 +178,7 @@ class NightLampSpec:
     status: CalibrationStatus = CalibrationStatus.READY  # manifest-only, no runtime branch
 
     night_gate: dict = field(default_factory=dict)   # enter/exit/persistence
+    lamp_roi: dict = field(default_factory=dict)     # 水马灯带：只在水马行附近找灯
     sampling: SamplingSpec = field(default_factory=SamplingSpec)
     memory: MemorySpec = field(default_factory=MemorySpec)
     baseline: BaselineSpec = field(default_factory=BaselineSpec)

@@ -55,6 +55,7 @@ M_FLASH_AREA = "flash_area"
 M_FLASH_UNION_AREA = "flash_union_area"
 M_FLASH_BUCKET_COUNT = "flash_bucket_count"
 M_CALIBRATION_STATUS = "calibration_status"
+M_LAMP_ROI = "lamp_roi"
 
 # Frozen semantics: the morning map is the OR of per-hour flash presence,
 # never a sustained-duration map (see the Phase-0 decision).
